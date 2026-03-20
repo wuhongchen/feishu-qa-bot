@@ -116,7 +116,8 @@ python3 scripts/sync_intents_to_bitable.py
 
 ## 8. 配置未命中 AI 搜索兜底（可选）
 
-如果你希望“意图未命中时也尽量回复”，可以开启受控 AI 搜索兜底：
+系统默认在“意图未命中”时也会回复普通问答，不会静默。  
+如果你希望未命中时优先给出带来源的检索答复，可以开启受控 AI 搜索兜底：
 
 - `QA_ENABLE_AI_FALLBACK=true`
 - `QA_AI_SEARCH_PROVIDER=tavily`
@@ -128,6 +129,11 @@ python3 scripts/sync_intents_to_bitable.py
 - 仅在本地知识库未命中时触发
 - 仅引用白名单域名内容
 - 命中禁答词（医疗、法律、投资等）直接拒答并提示人工
+
+补充机制：
+
+- 所有未命中问题会自动写入 `QA_INTENT_BACKLOG_FILE`（默认 `backups/intent_backlog.json`）
+- 可定期根据 backlog 把高频问题补充到 `intents.json`
 
 ## 常见问题
 

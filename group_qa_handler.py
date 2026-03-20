@@ -20,6 +20,7 @@ from intent_classifier_v5 import (  # noqa: E402
     reload_intents,
 )
 from ai_search_fallback import build_ai_search_rule  # noqa: E402
+from intent_backlog import record_unmatched_question  # noqa: E402
 
 load_project_env(__file__)
 
@@ -42,6 +43,7 @@ SESSION_TTL_MINUTES = max(5, int(os.getenv("QA_SESSION_TTL_MINUTES", "30")))
 ENABLE_NPS = _parse_bool(os.getenv("QA_ENABLE_NPS"), True)
 NPS_EXCLUDE_INTENTS = {"thanks", "bot_status"}
 NPS_EXCLUDE_INTENTS.update({"ai_search_fallback", "ai_search_no_result", "ai_search_blocked", "ai_search_unavailable"})
+NPS_EXCLUDE_INTENTS.update({"general_qa_fallback", "unmatched_pending"})
 
 # Backward-compat symbol.
 QA_RULES = get_all_intents()
@@ -121,6 +123,32 @@ def match_question_with_fallback(question: str) -> Optional[dict]:
 def generate_fallback() -> str:
     """Backward-compat fallback text."""
     return "我暂时没理解这个问题，可以换个说法，或补充更具体的关键词。"
+
+
+def build_general_qa_rule(question: str, backlog_id: str = "", backlog_count: int = 0) -> dict:
+    """Build always-respond fallback when no intent/search answer is available."""
+    question = str(question or "").strip()
+    short_question = question[:60] + "..." if len(question) > 60 else question
+    backlog_tip = ""
+    if backlog_id:
+        backlog_tip = f"\n我已将该问题加入意图补充库（{backlog_id}，累计 {max(1, backlog_count)} 次）。"
+
+    answer = (
+        f"我先按普通问答处理：你问的是「{short_question}」。\n"
+        "当前意图库还没有这条标准答案，我先给你通用建议：\n"
+        "1) 补充具体场景（课程名/任务名/时间点）\n"
+        "2) 给出你卡住的步骤或报错信息\n"
+        "3) 我会继续基于你补充的信息给出更精确答复"
+        f"{backlog_tip}\n"
+        "如果你愿意，我可以下一条直接按“可执行步骤清单”格式回答。"
+    )
+    return {
+        "answer": answer,
+        "source": "普通问答/待补充意图",
+        "confidence": 0.42,
+        "intent": "general_qa_fallback",
+        "links": [],
+    }
 
 
 def generate_reply(
@@ -233,22 +261,27 @@ def process_group_message(
     if nps_reply:
         return nps_reply, nps_record
 
-    rule = match_question_with_fallback(message)
-    if not rule:
-        session["questions"].append(message)
-        unmatched_answer = "未命中意图，已记录到问题库，待后续补充知识。"
-        record_fields = build_record_fields(
-            session,
-            question=message,
-            answer=unmatched_answer,
-            matched=False,
-            nps_requested=False,
-        )
-        record_fields["状态"] = "未命中"
-        record_fields["知识来源"] = "知识库/未命中"
-        record_fields["置信度"] = 0.0
-        record_fields["意图分类"] = "unmatched"
-        return None, record_fields
+    # 1) Local intent first.
+    local_rule = match_question(message)
+    if local_rule:
+        rule = local_rule
+    else:
+        # 2) Record unmatched question for intent-library evolution.
+        backlog_id = ""
+        backlog_count = 0
+        try:
+            backlog_id, backlog_count, _ = record_unmatched_question(
+                question=message,
+                chat_id=chat_id,
+                sender_id=sender_id,
+            )
+        except Exception:
+            backlog_id, backlog_count = "", 0
+        # 3) Try scoped AI search fallback.
+        rule = build_ai_search_rule(message)
+        # 4) Always respond even if search has no answer.
+        if not rule:
+            rule = build_general_qa_rule(message, backlog_id=backlog_id, backlog_count=backlog_count)
 
     session["rounds"] += 1
 
@@ -284,6 +317,8 @@ def process_group_message(
         matched=True,
         nps_requested=add_nps_prompt,
     )
+    if rule.get("intent") in {"general_qa_fallback", "ai_search_fallback", "ai_search_no_result"}:
+        record_fields["状态"] = "待补充意图"
     return reply, record_fields
 
 

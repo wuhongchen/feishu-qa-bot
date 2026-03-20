@@ -6,9 +6,10 @@
 
 - 基于 `intents.json` 的动态意图分类（支持热重载）
 - 意图库条目校验（去重、字段归一化、可启停、优先级与排除词）
-- 自动群聊问答（可静默未命中问题）
+- 自动群聊问答（配置群内消息都会处理，不再静默未命中）
 - 所有问题入库（命中与未命中都会写入 bitable）
 - 未命中兜底 AI 搜索（白名单域名 + 禁答词边界，默认关闭）
+- 未命中问题自动沉淀到本地意图补充库（`backups/intent_backlog.json`）
 - 首轮 NPS 评分收集（0-10 分）
 - 问答记录写入飞书多维表格
 - 意图库快照同步到飞书多维表格（upsert）
@@ -21,6 +22,7 @@
 - `group_qa_handler.py`: 核心消息处理、会话管理、NPS
 - `intent_classifier_v5.py`: 动态意图分类器
 - `ai_search_fallback.py`: 未命中后的受控 AI 搜索兜底
+- `intent_backlog.py`: 未命中问题沉淀到意图补充库
 - `bitable_helper.py`: base 链接解析、自动选表、记录读写辅助
 - `intents.json`: 业务知识库 + 回复文案模板
 - `scripts/sync_knowledge_base.py`: 知识库同步脚本（校验、备份、原子更新）
@@ -42,6 +44,7 @@ feishu-qa-bot/
 ├── group_qa_poller_v3.py
 ├── intent_classifier_v5.py
 ├── ai_search_fallback.py
+├── intent_backlog.py
 ├── intents.json
 ├── quick_group_qa.py
 ├── scripts/
@@ -156,6 +159,8 @@ QA_AI_SEARCH_PROVIDER=tavily
 QA_TAVILY_API_KEY=tvly-xxxx
 QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
 ```
+
+即便 AI 搜索未开启或无结果，系统也会返回“普通问答”兜底回复，并把该问题写入意图补充库，避免群里无响应。
 
 ## 意图库同步到表格（新增）
 
