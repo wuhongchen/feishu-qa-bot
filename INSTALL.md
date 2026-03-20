@@ -134,7 +134,6 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_OPENCLAW_THEN_INTENT=true`（可选：先 OpenClaw，再意图匹配，命中意图则优先意图答案）
 - `QA_ENABLE_IMAGE_UNDERSTANDING=true`
 - `QA_IMAGE_MAX_BYTES=5000000`
-- `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
 - 需要本机 OpenClaw gateway 可用（`openclaw health` 可检查）
 
 如果你要改为 Tavily，再补：
@@ -145,7 +144,6 @@ python3 scripts/sync_intents_to_bitable.py
 边界机制：
 
 - 仅在本地知识库未命中时触发
-- 仅引用白名单域名内容
 - 命中禁答词（医疗、法律、投资等）直接拒答并提示人工
 
 补充机制：

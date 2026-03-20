@@ -8,7 +8,7 @@
 - 意图库条目校验（去重、字段归一化、可启停、优先级与排除词）
 - 自动群聊问答（配置群内消息都会处理，不再静默未命中）
 - 所有问题入库（命中与未命中都会写入 bitable）
-- 未命中兜底 AI 搜索（白名单域名 + 禁答词边界，默认走 OpenClaw 搜索）
+- 未命中兜底 AI 搜索（默认走 OpenClaw 搜索）
 - 图片消息直连 OpenClaw 多模态识别（识别后直接自然语言回复）
 - 未命中问题自动沉淀到本地意图补充库（`backups/intent_backlog.json`）
 - 首轮 NPS 评分收集（0-10 分）
@@ -156,7 +156,6 @@ python3 scripts/sync_knowledge_base.py \
 
 边界控制：
 
-- `QA_AI_SEARCH_ALLOWED_DOMAINS`：仅检索并引用白名单域名
 - `QA_AI_FALLBACK_BLOCKED_KEYWORDS`：命中后直接拒答并提示人工
 - 仅输出检索证据摘要，不做范围外推断
 
@@ -171,7 +170,6 @@ QA_FORCE_OPENCLAW=false
 QA_OPENCLAW_THEN_INTENT=true
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
-QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
 ```
 
 说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。

@@ -10,7 +10,7 @@ capabilities:
   - id: reply-with-template
     description: 按统一文案模板生成结构化回复并附带来源与链接
   - id: ai-search-fallback
-    description: 本地意图未命中时按白名单域名执行受控 AI 搜索兜底
+    description: 本地意图未命中时执行 AI 搜索兜底
   - id: collect-nps
     description: 首轮有效答复后触发 0-10 分评分并记录 NPS 状态
   - id: poll-feishu-groups
@@ -55,7 +55,6 @@ permissions:
     - QA_ENABLE_AI_FALLBACK
     - QA_AI_SEARCH_PROVIDER
     - QA_TAVILY_API_KEY
-    - QA_AI_SEARCH_ALLOWED_DOMAINS
     - QA_AI_SEARCH_MAX_RESULTS
     - QA_AI_SEARCH_TIMEOUT
     - QA_AI_SEARCH_DEPTH
@@ -174,7 +173,6 @@ minOpenClawVersion: 0.1.0
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
 - `QA_TAVILY_API_KEY=tvly-...`
-- `QA_AI_SEARCH_ALLOWED_DOMAINS=a.com,b.com`
 - `QA_AI_SEARCH_MAX_RESULTS=3`
 - `QA_AI_SEARCH_TIMEOUT=10`
 - `QA_AI_SEARCH_DEPTH=basic`
@@ -248,7 +246,6 @@ bash scripts/register_openclaw_cron.sh
 ### 5.1 当前智能能力边界
 
 - 本地意图优先，兜底搜索只在未命中时触发。
-- 兜底搜索仅允许白名单域名，不跨域扩展。
 - 命中禁用词直接拒答并引导人工，不做高风险建议。
 - 回答以证据摘要为主，不做无来源推断。
 

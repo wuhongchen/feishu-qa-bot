@@ -7,19 +7,11 @@ import json
 import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import requests
 
 
-DEFAULT_ALLOWED_DOMAINS = [
-    "waytoagi.feishu.cn",
-    "t0woxppdywz.feishu.cn",
-    "docs.openclaw.ai",
-    "openclaw.ai",
-    "clawhub.com",
-]
 DEFAULT_BLOCKED_KEYWORDS = [
     "医疗",
     "诊断",
@@ -62,24 +54,6 @@ def _parse_csv(value: Optional[str], default_values: List[str]) -> List[str]:
     return [x.strip() for x in value.split(",") if x.strip()]
 
 
-def _extract_domain(url: str) -> str:
-    try:
-        return urlparse(url).netloc.lower()
-    except Exception:
-        return ""
-
-
-def _is_allowed_domain(url: str, allowed_domains: List[str]) -> bool:
-    domain = _extract_domain(url)
-    if not domain:
-        return False
-    for allowed in allowed_domains:
-        allowed = allowed.lower()
-        if domain == allowed or domain.endswith(f".{allowed}"):
-            return True
-    return False
-
-
 def _clean_snippet(text: str, max_len: int = 120) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(cleaned) <= max_len:
@@ -107,7 +81,7 @@ def _is_blocked(question: str, blocked_keywords: List[str]) -> Tuple[bool, Optio
     return False, None
 
 
-def _search_with_tavily(question: str, allowed_domains: List[str], max_results: int, timeout: int) -> List[SearchItem]:
+def _search_with_tavily(question: str, max_results: int, timeout: int) -> List[SearchItem]:
     api_key = os.getenv("QA_TAVILY_API_KEY", "").strip()
     if not api_key:
         return []
@@ -118,7 +92,6 @@ def _search_with_tavily(question: str, allowed_domains: List[str], max_results: 
         "search_depth": os.getenv("QA_AI_SEARCH_DEPTH", "basic"),
         "max_results": max(1, min(8, max_results)),
         "include_answer": False,
-        "include_domains": allowed_domains,
     }
 
     try:
@@ -136,8 +109,6 @@ def _search_with_tavily(question: str, allowed_domains: List[str], max_results: 
         url = str(row.get("url", "")).strip()
         snippet = _clean_snippet(row.get("content", ""))
         if not title or not url or not snippet:
-            continue
-        if not _is_allowed_domain(url, allowed_domains):
             continue
         out.append(SearchItem(title=title, url=url, snippet=snippet))
     return out
@@ -208,17 +179,14 @@ def _extract_openclaw_plain_text(payload: Dict[str, object], raw_text: str = "")
 
 def _search_with_openclaw_agent(
     question: str,
-    allowed_domains: List[str],
     max_results: int,
     timeout_seconds: int,
 ) -> Tuple[str, List[SearchItem], str]:
     agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
     model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
-    domain_text = ", ".join(allowed_domains[:10])
 
     prompt = (
         "你是知识检索助手。请先检索再回答。\n"
-        f"仅允许引用这些域名：{domain_text}\n"
         "输出必须是严格 JSON，不要输出任何额外文本：\n"
         "{\n"
         '  "answer": "给用户的简洁回答（120字内）",\n'
@@ -291,8 +259,6 @@ def _search_with_openclaw_agent(
             url = str(row.get("url", "")).strip()
             snippet = _clean_snippet(str(row.get("snippet", "")).strip())
             if not title or not url or not snippet:
-                continue
-            if not _is_allowed_domain(url, allowed_domains):
                 continue
             items.append(SearchItem(title=title, url=url, snippet=snippet))
             if len(items) >= max(1, min(8, max_results)):
@@ -375,14 +341,10 @@ def _looks_like_openclaw_error_text(text: str) -> bool:
     return any(p in lower for p in patterns)
 
 
-def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) -> str:
+def _build_scoped_answer(items: List[SearchItem]) -> str:
     lines = ["检索结果："]
     for idx, item in enumerate(items, start=1):
         lines.append(f"{idx}. {item.title}：{item.snippet}")
-
-    domains = "、".join(allowed_domains[:5])
-    lines.append("")
-    lines.append(f"来源范围：{domains}")
     return "\n".join(lines)
 
 
@@ -460,7 +422,6 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
             "links": [],
         }
 
-    allowed_domains = _parse_csv(os.getenv("QA_AI_SEARCH_ALLOWED_DOMAINS"), DEFAULT_ALLOWED_DOMAINS)
     max_results = max(1, int(os.getenv("QA_AI_SEARCH_MAX_RESULTS", "3")))
     tavily_timeout = max(3, int(os.getenv("QA_AI_SEARCH_TIMEOUT", "10")))
     openclaw_timeout = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
@@ -468,7 +429,6 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
     if provider == "openclaw":
         answer_text, items, err = _search_with_openclaw_agent(
             question=question,
-            allowed_domains=allowed_domains,
             max_results=max_results,
             timeout_seconds=openclaw_timeout,
         )
@@ -494,12 +454,12 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
                 "links": [],
             }
 
-        answer = answer_text or _build_scoped_answer(items, allowed_domains)
+        answer = answer_text or _build_scoped_answer(items)
         links = [{"name": item.title[:32], "url": item.url} for item in items]
         confidence = min(0.78, 0.48 + len(items) * 0.08)
         return {
             "answer": answer,
-            "source": "OpenClaw搜索/白名单站点",
+            "source": "OpenClaw搜索",
             "confidence": confidence,
             "intent": "ai_search_fallback",
             "links": links,
@@ -517,12 +477,7 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
             "links": [],
         }
 
-    items = _search_with_tavily(
-        question=question,
-        allowed_domains=allowed_domains,
-        max_results=max_results,
-        timeout=tavily_timeout,
-    )
+    items = _search_with_tavily(question=question, max_results=max_results, timeout=tavily_timeout)
     if not items:
         return {
             "answer": (
@@ -535,12 +490,12 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
             "links": [],
         }
 
-    answer = _build_scoped_answer(items, allowed_domains)
+    answer = _build_scoped_answer(items)
     links = [{"name": item.title[:32], "url": item.url} for item in items]
     confidence = min(0.75, 0.45 + len(items) * 0.08)
     return {
         "answer": answer,
-        "source": "AI搜索/白名单站点",
+        "source": "AI搜索",
         "confidence": confidence,
         "intent": "ai_search_fallback",
         "links": links,

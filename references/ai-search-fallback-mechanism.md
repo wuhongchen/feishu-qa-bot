@@ -10,7 +10,6 @@ Core implementation: `ai_search_fallback.py`
 
 ## Scope boundary
 
-- Search source is restricted by `QA_AI_SEARCH_ALLOWED_DOMAINS`.
 - Out-of-scope topics are blocked by `QA_AI_FALLBACK_BLOCKED_KEYWORDS`.
 - Small-talk is skipped by `QA_AI_FALLBACK_SKIP_PATTERNS`.
 
