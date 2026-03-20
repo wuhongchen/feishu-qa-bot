@@ -160,7 +160,7 @@ QA_OPENCLAW_SEARCH_AGENT=main
 QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
 ```
 
-说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会自动回退到普通问答。
+说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
 
 如需改为 Tavily：
 
@@ -169,7 +169,7 @@ QA_AI_SEARCH_PROVIDER=tavily
 QA_TAVILY_API_KEY=tvly-xxxx
 ```
 
-即便 AI 搜索未开启或无结果，系统也会返回“普通问答”兜底回复，并把该问题写入意图补充库，避免群里无响应。
+若 OpenClaw 搜索无结果或不可用，系统会直接返回搜索状态提示，并把该问题写入意图补充库。
 
 ## 意图库同步到表格（新增）
 

@@ -162,6 +162,28 @@ def _extract_first_json_block(text: str) -> Optional[Dict[str, object]]:
     return None
 
 
+def _extract_payload_text_from_openclaw_response(payload: Dict[str, object]) -> str:
+    texts: List[str] = []
+
+    def collect(obj: object) -> None:
+        if not isinstance(obj, dict):
+            return
+        payloads = obj.get("payloads")
+        if isinstance(payloads, list):
+            for row in payloads:
+                if not isinstance(row, dict):
+                    continue
+                text = str(row.get("text", "")).strip()
+                if text:
+                    texts.append(text)
+        nested = obj.get("result")
+        if isinstance(nested, dict):
+            collect(nested)
+
+    collect(payload)
+    return "\n".join([x for x in texts if x]).strip()
+
+
 def _search_with_openclaw_agent(
     question: str,
     allowed_domains: List[str],
@@ -214,11 +236,26 @@ def _search_with_openclaw_agent(
         return "", [], f"openclaw_non_zero_exit: {combined[:240]}"
 
     payload = _extract_first_json_block(combined)
-    if not isinstance(payload, dict):
+    content = ""
+    if isinstance(payload, dict):
+        # openclaw agent --json usually returns {payloads:[{text:...}],meta:{...}}
+        content = _extract_payload_text_from_openclaw_response(payload)
+        if not content:
+            # or the model response may already be plain JSON object in top-level text.
+            content = combined.strip()
+    else:
+        content = combined.strip()
+
+    inner = _extract_first_json_block(content)
+    if not isinstance(inner, dict):
+        # Allow plain text answers if model does not return strict JSON.
+        answer_text = content.strip()
+        if answer_text:
+            return answer_text, [], ""
         return "", [], "openclaw_output_not_json"
 
-    answer = str(payload.get("answer", "")).strip()
-    sources_raw = payload.get("sources", [])
+    answer = str(inner.get("answer", "")).strip()
+    sources_raw = inner.get("sources", [])
     items: List[SearchItem] = []
     if isinstance(sources_raw, list):
         for row in sources_raw:
@@ -239,33 +276,37 @@ def _search_with_openclaw_agent(
 
 
 def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) -> str:
-    lines = ["我没有命中本地知识库，但在限定范围内检索到这些信息："]
+    lines = ["检索结果："]
     for idx, item in enumerate(items, start=1):
         lines.append(f"{idx}. {item.title}：{item.snippet}")
 
     domains = "、".join(allowed_domains[:5])
     lines.append("")
-    lines.append(f"边界说明：仅基于白名单站点（如 {domains}）公开信息，不做范围外推断。")
-    lines.append("如果你希望，我可以继续按这个问题给你缩小到 1-2 条最相关入口。")
+    lines.append(f"来源范围：{domains}")
     return "\n".join(lines)
 
 
 def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
     """Return a pseudo-intent rule for unmatched question, or None."""
     provider = os.getenv("QA_AI_SEARCH_PROVIDER", "openclaw").strip().lower()
-    enabled_default = provider == "openclaw"
+    # OpenClaw provider is the default unmatched path. Do not silently skip.
+    enabled_default = True if provider == "openclaw" else False
     enabled = _parse_bool(os.getenv("QA_ENABLE_AI_FALLBACK"), enabled_default)
     if not enabled:
         return None
 
     question = str(question or "").strip()
-    min_chars = max(2, int(os.getenv("QA_AI_FALLBACK_MIN_CHARS", "4")))
-    if len(question) < min_chars:
+    if not question:
         return None
 
-    skip_patterns = _parse_csv(os.getenv("QA_AI_FALLBACK_SKIP_PATTERNS"), DEFAULT_SKIP_PATTERNS)
-    if _is_smalltalk(question, skip_patterns):
-        return None
+    if provider != "openclaw":
+        min_chars = max(2, int(os.getenv("QA_AI_FALLBACK_MIN_CHARS", "4")))
+        if len(question) < min_chars:
+            return None
+
+        skip_patterns = _parse_csv(os.getenv("QA_AI_FALLBACK_SKIP_PATTERNS"), DEFAULT_SKIP_PATTERNS)
+        if _is_smalltalk(question, skip_patterns):
+            return None
 
     blocked_keywords = _parse_csv(os.getenv("QA_AI_FALLBACK_BLOCKED_KEYWORDS"), DEFAULT_BLOCKED_KEYWORDS)
     blocked, keyword = _is_blocked(question, blocked_keywords)
@@ -297,8 +338,7 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         if err:
             return {
                 "answer": (
-                    "未命中本地知识库，且 OpenClaw 搜索当前不可用。"
-                    "\n我会先进入普通问答兜底，并把该问题加入意图补充库。"
+                    "OpenClaw 搜索当前不可用，请稍后重试或 @助教。"
                 ),
                 "source": "OpenClaw搜索/不可用",
                 "confidence": 0.2,
@@ -309,8 +349,7 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         if not answer_text and not items:
             return {
                 "answer": (
-                    "我没有命中本地知识库，也未在限定搜索范围内找到足够可靠的信息。"
-                    "\n我会先按普通问答给你可执行建议。"
+                    "已执行 OpenClaw 搜索，但暂未检索到可用结果。请补充关键词后再试。"
                 ),
                 "source": "OpenClaw搜索/无结果",
                 "confidence": 0.25,

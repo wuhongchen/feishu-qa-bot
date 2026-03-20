@@ -116,8 +116,8 @@ python3 scripts/sync_intents_to_bitable.py
 
 ## 8. 配置未命中 AI 搜索兜底（可选）
 
-系统默认在“意图未命中”时也会回复普通问答，不会静默。  
-如果你希望未命中时优先给出带来源的检索答复，可以开启受控 AI 搜索兜底：
+系统默认在“意图未命中”时直接走 OpenClaw 搜索。  
+如果你希望未命中时给出带来源的检索答复，可以开启受控 AI 搜索兜底：
 
 - `QA_ENABLE_AI_FALLBACK=true`
 - `QA_AI_SEARCH_PROVIDER=openclaw`
