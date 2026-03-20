@@ -1,0 +1,138 @@
+# 安装指南
+
+## 1. 安装依赖
+
+```bash
+cd feishu_qa_bot_skill
+pip install -r requirements.txt
+```
+
+## 2. 配置环境变量
+
+```bash
+cp .env.example .env
+# 然后把 .env 里所有必填项替换成你的真实值
+```
+
+至少需要配置：
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `QA_BITABLE_TOKEN` + `QA_TABLE_ID`（二选一）
+  或 `QA_BITABLE_BASE_URL`（推荐，支持自动解析）
+- `QA_CHAT_ID`
+
+如果你只有 base 链接，也可以不用手填 `QA_BITABLE_TOKEN`：
+
+- 配置 `QA_BITABLE_BASE_URL`（例如你提供的 `RQLIbiG3VaIg0rsZxezcKTaMnwf` 这个 base）
+- 可选配置 `QA_TABLE_NAME`，用于自动选表
+
+## 3. 本地冒烟测试
+
+```bash
+python3 group_qa_handler.py
+python3 quick_group_qa.py
+```
+
+## 4. 手动执行轮询
+
+```bash
+python3 group_qa_poller_v3.py
+```
+
+如果你想先同步知识库再执行轮询：
+
+```bash
+QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
+```
+
+## 5. 配置定时任务
+
+你可以使用系统 cron 或 OpenClaw cron，每分钟执行一次轮询：
+
+```bash
+openclaw cron add \
+  --name="qa_bot_poller" \
+  --schedule="every 60s" \
+  --command="python3 /path/to/feishu_qa_bot_skill/group_qa_poller_v3.py"
+```
+
+## 6. 配置知识库定时同步（新增）
+
+先配置知识源：
+
+- `QA_KB_SOURCE`: 本地 JSON 文件路径、JSON URL，或飞书 Wiki 链接
+- `QA_KB_TARGET`: 本项目的 `intents.json` 路径
+
+手动执行一次同步：
+
+```bash
+python3 scripts/sync_knowledge_base.py --source "$QA_KB_SOURCE"
+```
+
+飞书 Wiki 示例：
+
+```bash
+python3 scripts/sync_knowledge_base.py \
+  --source "https://waytoagi.feishu.cn/wiki/WewVwPVkyipyaCka7twcwPZMnJf"
+```
+
+加定时任务（每 10 分钟）：
+
+```bash
+*/10 * * * * cd /path/to/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
+```
+
+说明：同步脚本默认严格校验（`QA_KB_STRICT=true`），校验失败会拒绝覆盖线上知识库。
+
+也可以直接使用运维模板（轮询 + 同步 + 每日冒烟）：
+
+```bash
+cat templates/crontab.ops.example
+```
+
+## 7. 配置意图库同步到表格（新增）
+
+手动同步一次：
+
+```bash
+python3 scripts/sync_intents_to_bitable.py
+```
+
+独立定时任务（每 15 分钟）：
+
+```bash
+*/15 * * * * cd /path/to/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1
+```
+
+## 8. 配置未命中 AI 搜索兜底（可选）
+
+如果你希望“意图未命中时也尽量回复”，可以开启受控 AI 搜索兜底：
+
+- `QA_ENABLE_AI_FALLBACK=true`
+- `QA_AI_SEARCH_PROVIDER=tavily`
+- `QA_TAVILY_API_KEY=...`
+- `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
+
+边界机制：
+
+- 仅在本地知识库未命中时触发
+- 仅引用白名单域名内容
+- 命中禁答词（医疗、法律、投资等）直接拒答并提示人工
+
+## 常见问题
+
+### 1) Token 获取失败
+
+- 检查 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 是否正确。
+- 检查飞书应用是否为企业自建应用，且密钥未过期。
+
+### 2) 能读消息但发不出去
+
+- 检查是否开通 `im:message:send_as_bot` 或等价发送权限。
+- 检查机器人是否在目标群中。
+
+### 3) 能回复但写不了表格
+
+- 检查 `QA_BITABLE_TOKEN` 和 `QA_TABLE_ID`。
+- 检查应用权限 `bitable:app`、`base:record:create`。

@@ -1,0 +1,299 @@
+[
+  {
+    "id": "course_schedule",
+    "name": "course schedule",
+    "keywords": [
+      "课程安排",
+      "课程表",
+      "时间安排",
+      "几点上课",
+      "什么时候上课",
+      "直播时间",
+      "周几"
+    ],
+    "patterns": [
+      "第[一二三四五六七八九十0-9]+课.*(什么时候|时间|周几|开始)",
+      "课程.*安排",
+      "上课.*时间",
+      "直播.*几点"
+    ],
+    "answer": "课程安排建议以群公告和课程 Wiki 的最新更新为准。\n\n你可以这样快速确认：\n1. 先看群公告置顶消息（通常最及时）\n2. 再看课程 Wiki 的课表页面\n3. 如果两处信息不一致，以群内最新通知为准\n\n如果你愿意，我也可以帮你定位到你关心的具体课次。",
+    "links": [
+      {
+        "name": "训练营课程 Wiki",
+        "url": "https://t0woxppdywz.feishu.cn/wiki/P40xw1lg4iBvTskroZacIzkMnab"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "course_material",
+    "name": "course material",
+    "keywords": [
+      "课件",
+      "PPT",
+      "资料",
+      "文档",
+      "笔记",
+      "链接",
+      "飞书文档",
+      "Wiki"
+    ],
+    "patterns": [
+      "课件.*哪里",
+      "资料.*下载",
+      "文档.*链接"
+    ],
+    "answer": "课件资料通常在课程 Wiki 和群公告中同步更新。\n\n建议按这个顺序找：\n1. 飞书 Wiki 训练营主页\n2. 群公告置顶的课后资料\n3. 对应课次的回放页\n\n如果你告诉我是哪一节课，我可以给你更精确的入口。",
+    "links": [
+      {
+        "name": "训练营 Wiki",
+        "url": "https://t0woxppdywz.feishu.cn/wiki/P40xw1lg4iBvTskroZacIzkMnab"
+      },
+      {
+        "name": "OpenClaw 文档",
+        "url": "https://docs.openclaw.ai"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "homework_deadline",
+    "name": "homework deadline",
+    "keywords": [
+      "作业",
+      "截止",
+      "deadline",
+      "期限",
+      "什么时候交",
+      "截止时间"
+    ],
+    "patterns": [
+      "作业.*截止",
+      "什么时候.*交"
+    ],
+    "answer": "作业截止时间请以群公告的最新通知为准。\n\n一般建议：\n1. 优先按当周要求提交\n2. 如需补交，先看是否有补交说明\n3. 提交后保留提交截图或回执\n\n如果你需要，我可以继续告诉你提交入口。",
+    "links": [
+      {
+        "name": "作业提交表单",
+        "url": "https://waytoagi.feishu.cn/share/base/form/shrcnLmCTrk0lUgITWM0w1PYnTb"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "homework_submit",
+    "name": "homework submit",
+    "keywords": [
+      "提交",
+      "上传",
+      "交作业",
+      "表单",
+      "怎么交"
+    ],
+    "patterns": [
+      "作业.*提交",
+      "怎么.*交"
+    ],
+    "answer": "作业可以通过群内表单提交。\n\n标准流程：\n1. 打开作业提交表单\n2. 填写你的作业链接/说明\n3. 提交后等待助教审核\n\n如果你不确定字段怎么填，可以把字段名发我，我帮你逐项解释。",
+    "links": [
+      {
+        "name": "作业提交表单",
+        "url": "https://waytoagi.feishu.cn/share/base/form/shrcnLmCTrk0lUgITWM0w1PYnTb"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "skill_install",
+    "name": "skill install",
+    "keywords": [
+      "安装",
+      "添加技能",
+      "skill",
+      "skills",
+      "怎么装",
+      "下载技能"
+    ],
+    "patterns": [
+      "安装.*skill",
+      "skill.*安装",
+      "怎么.*技能"
+    ],
+    "answer": "可以通过命令行快速安装技能。\n\n常用命令：\n1. 搜索技能：openclaw skills search <关键词>\n2. 安装技能：openclaw skills install <skill-id>\n3. 查看已安装：openclaw skills list\n\n如果安装失败，我可以继续帮你排查报错。",
+    "links": [
+      {
+        "name": "技能市场",
+        "url": "https://clawhub.com"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "coding_plan",
+    "name": "coding plan",
+    "keywords": [
+      "coding plan",
+      "codingplan",
+      "购买",
+      "怎么买",
+      "哪里买",
+      "多少钱"
+    ],
+    "patterns": [
+      "coding.*plan",
+      "购买.*plan",
+      "买.*coding",
+      "coding.*买"
+    ],
+    "answer": "Coding Plan 建议在官方渠道购买，并根据使用频率选择套餐。\n\n建议流程：\n1. 先确认你需要的模型和调用量\n2. 选择月付或年付套餐\n3. 购买后在 OpenClaw 完成绑定\n\n如果你说下你的使用场景，我可以给你更省钱的套餐建议。",
+    "links": [
+      {
+        "name": "Coding Plan 说明",
+        "url": "https://www.feishu.cn/wiki/YzQQwm8wWiAH7hkScPcc1DS4nge"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "skill_missing",
+    "name": "skill missing",
+    "keywords": [
+      "找不到",
+      "skill找不到",
+      "没有",
+      "缺失",
+      "缺少"
+    ],
+    "patterns": [
+      "skill.*找不到",
+      "找不到.*skill"
+    ],
+    "answer": "技能找不到通常是名称、源或缓存导致的。\n\n你可以按顺序排查：\n1. 先用 openclaw skills search 重新搜索\n2. 检查技能名拼写是否一致\n3. 更新索引后再安装一次\n4. 必要时用 GitHub 源手动安装\n\n如果你把报错贴出来，我可以给你精确修复命令。",
+    "links": [
+      {
+        "name": "技能市场",
+        "url": "https://clawhub.com"
+      }
+    ],
+    "threshold": 0.54
+  },
+  {
+    "id": "pairing_code",
+    "name": "pairing code",
+    "keywords": [
+      "配对码",
+      "配对",
+      "连接码",
+      "配对失败",
+      "小龙虾",
+      "龙虾",
+      "配对问题"
+    ],
+    "patterns": [
+      "配对.*码",
+      "配对.*失败",
+      "小龙虾.*配对",
+      "连接码.*失败"
+    ],
+    "answer": "配对码问题一般是超时或网络不稳定导致。\n\n建议这样处理：\n1. 在移动端重新生成配对码\n2. 生成后 1 分钟内完成输入\n3. 保持手机和电脑网络稳定\n4. 仍失败时重启客户端再试\n\n多次失败可以直接 @助教 协助排查。",
+    "links": [],
+    "threshold": 0.45
+  },
+  {
+    "id": "model_config",
+    "name": "model config",
+    "keywords": [
+      "百炼",
+      "模型",
+      "添加模型",
+      "怎么配",
+      "免费额度",
+      "通义千问",
+      "qwen",
+      "模型配置"
+    ],
+    "patterns": [
+      "百炼.*模型",
+      "模型.*添加",
+      "免费.*额度",
+      "怎么.*模型",
+      "模型.*怎么配",
+      "怎么配.*模型"
+    ],
+    "answer": "你可以在 OpenClaw 设置里添加百炼模型。\n\n配置步骤：\n1. 打开设置 -> 模型配置\n2. 选择供应商（如阿里云百炼）\n3. 填入 API Key\n4. 选择可用模型并保存\n\n建议先用低成本模型做连通性测试，再切换到正式模型。",
+    "links": [
+      {
+        "name": "阿里云百炼控制台",
+        "url": "https://bailian.console.aliyun.com/"
+      }
+    ],
+    "threshold": 0.5
+  },
+  {
+    "id": "greeting",
+    "name": "greeting",
+    "keywords": [
+      "你好",
+      "hello",
+      "hi",
+      "在吗",
+      "有人吗",
+      "求助"
+    ],
+    "patterns": [
+      "^(你好|hello|hi|在吗|有人吗)$"
+    ],
+    "answer": "你好，我是 QA 麻小。\n\n我可以帮你回答：\n- 课程安排和资料\n- 作业截止与提交\n- 技能安装与排错\n- 模型配置和配对问题\n\n你直接提问题就行，不需要特别格式。",
+    "links": [],
+    "threshold": 0.35,
+    "priority": -1,
+    "exclude_keywords": [
+      "作业",
+      "课程",
+      "课件",
+      "skill",
+      "模型",
+      "配对",
+      "连接码"
+    ]
+  },
+  {
+    "id": "thanks",
+    "name": "thanks",
+    "keywords": [
+      "谢谢",
+      "感谢",
+      "谢了",
+      "解决了",
+      "有用",
+      "辛苦"
+    ],
+    "patterns": [
+      "(谢谢|感谢|辛苦了)$"
+    ],
+    "answer": "不客气，很高兴帮到你。\n\n如果后续还有问题，随时继续问我。",
+    "links": [],
+    "threshold": 0.35,
+    "priority": -1
+  },
+  {
+    "id": "bot_status",
+    "name": "bot status",
+    "keywords": [
+      "活着",
+      "在线",
+      "状态",
+      "挂了",
+      "是否正常",
+      "bot"
+    ],
+    "patterns": [
+      "bot.*活着",
+      "麻小.*活着"
+    ],
+    "answer": "我在线，当前可以正常接收和回复消息。\n\n如果你怀疑功能异常，可以直接发一条测试问题，我会立刻响应。",
+    "links": [],
+    "threshold": 0.45
+  }
+]

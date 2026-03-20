@@ -1,0 +1,2 @@
+# Sync intents snapshot to Bitable every 15 minutes
+*/15 * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1

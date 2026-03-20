@@ -1,0 +1,2 @@
+# Run QA poller every minute
+* * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_poller_once.sh >> /tmp/feishu_qa_bot.log 2>&1
