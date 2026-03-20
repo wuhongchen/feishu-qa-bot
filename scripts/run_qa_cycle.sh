@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Load project .env for non-interactive runners (cron/OpenClaw).
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/load_env.sh"
+
 cd "${PROJECT_DIR}"
 
 # Optional: sync KB before polling when QA_KB_SOURCE is configured.

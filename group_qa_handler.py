@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from env_bootstrap import load_project_env  # noqa: E402
 from intent_classifier_v5 import (  # noqa: E402
     classify_intent,
     get_all_intents,
@@ -19,6 +20,8 @@ from intent_classifier_v5 import (  # noqa: E402
     reload_intents,
 )
 from ai_search_fallback import build_ai_search_rule  # noqa: E402
+
+load_project_env(__file__)
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:

@@ -151,3 +151,10 @@ python3 scripts/sync_intents_to_bitable.py
 - 先确认技能已注入：`openclaw skills list --json | rg feishu-qa-bot-skill`
 - 再确认是 OpenClaw cron job：`openclaw cron list --all`
 - 如果只看到系统 crontab，没有 OpenClaw cron，请重新执行 `bash scripts/register_openclaw_cron.sh`
+
+### 5) 提示 FEISHU_APP_ID / FEISHU_APP_SECRET 未配置
+
+- 检查项目根目录是否存在 `.env`（可从 `.env.example` 复制）。
+- 确认 `.env` 中已填写真实 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
+- 重新执行：`bash scripts/run_poller_once.sh`
+- 可先验证鉴权：`python3 feishu_app_auth.py`

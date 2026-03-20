@@ -50,6 +50,7 @@ feishu-qa-bot/
 │   ├── run_single_message.py
 │   ├── run_kb_sync_once.sh
 │   ├── run_intent_sync_once.sh
+│   ├── load_env.sh
 │   ├── inject_openclaw_skill.sh
 │   ├── register_openclaw_cron.sh
 │   ├── sync_knowledge_base.py
@@ -204,4 +205,12 @@ python3 scripts/sync_intents_to_bitable.py --enabled false
 ```bash
 python3 /Users/hongchen/.codex/skills/openclaw-skill-creator/scripts/validate_openclaw_skill.py \
   /path/to/feishu-qa-bot
+```
+
+如果遇到 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 未配置：
+
+```bash
+cp -n .env.example .env
+# 编辑 .env 填入真实值后执行
+bash scripts/run_poller_once.sh
 ```

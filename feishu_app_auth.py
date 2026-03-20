@@ -9,6 +9,10 @@ from typing import Optional
 
 import requests
 
+from env_bootstrap import load_project_env
+
+load_project_env(__file__)
+
 
 class FeishuAppAuth:
     """Fetch and cache tenant_access_token for Feishu Open API."""
@@ -24,7 +28,16 @@ class FeishuAppAuth:
     def get_token(self) -> Optional[str]:
         """Return valid tenant_access_token, using cache when possible."""
         if not self.app_id or not self.app_secret:
-            print("[AppAuth] FEISHU_APP_ID 或 FEISHU_APP_SECRET 未配置")
+            missing = []
+            if not self.app_id:
+                missing.append("FEISHU_APP_ID")
+            if not self.app_secret:
+                missing.append("FEISHU_APP_SECRET")
+            missing_text = ", ".join(missing)
+            print(
+                f"[AppAuth] 环境变量未配置: {missing_text}。"
+                "请在项目根目录 .env 中配置后重试。"
+            )
             return None
 
         cached = self._load_cached()

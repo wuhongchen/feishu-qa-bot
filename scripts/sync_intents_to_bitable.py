@@ -13,6 +13,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from env_bootstrap import load_project_env  # noqa: E402
 from bitable_helper import (  # noqa: E402
     create_record,
     dump_json,
@@ -22,6 +23,8 @@ from bitable_helper import (  # noqa: E402
 )
 from feishu_app_auth import FeishuAppAuth  # noqa: E402
 from intent_classifier_v5 import load_intents  # noqa: E402
+
+load_project_env(__file__)
 
 
 def _intent_fields(intent: Dict[str, object], now_ms: int) -> Dict[str, object]:
@@ -173,4 +176,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

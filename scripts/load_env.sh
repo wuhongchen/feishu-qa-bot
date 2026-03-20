@@ -3,9 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${PROJECT_DIR}/.env"
 
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/load_env.sh"
-
-cd "${PROJECT_DIR}"
-python3 group_qa_poller_v3.py
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi

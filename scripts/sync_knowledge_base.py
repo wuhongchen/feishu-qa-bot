@@ -18,7 +18,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from env_bootstrap import load_project_env  # noqa: E402
 from intent_classifier_v5 import normalize_intents_payload  # noqa: E402
+
+load_project_env(__file__)
 
 WIKI_MARKER = "【来自训练营Wiki的最新信息】"
 WIKI_INTENT_RULES: Dict[str, List[str]] = {

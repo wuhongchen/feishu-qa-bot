@@ -14,9 +14,12 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from env_bootstrap import load_project_env  # noqa: E402
 from bitable_helper import create_record, resolve_app_and_table  # noqa: E402
 from feishu_app_auth import FeishuAppAuth  # noqa: E402
 from group_qa_handler import process_group_message  # noqa: E402
+
+load_project_env(__file__)
 
 PROCESS_WINDOW_MINUTES = max(1, int(os.getenv("QA_PROCESS_WINDOW_MINUTES", "5")))
 APP_TOKEN = os.getenv("QA_BITABLE_TOKEN", "").strip()
