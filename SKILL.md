@@ -210,6 +210,12 @@ python3 scripts/sync_knowledge_base.py --source "$QA_KB_SOURCE"
 bash scripts/run_qa_cycle.sh
 ```
 
+### 3.5 注入 OpenClaw 技能目录
+
+```bash
+bash scripts/inject_openclaw_skill.sh
+```
+
 ## 4. 调度方案（生产建议）
 
 ### 4.1 单任务全周期（推荐中小规模群）
@@ -233,10 +239,7 @@ bash scripts/run_qa_cycle.sh
 ### 4.4 OpenClaw Cron 调度
 
 ```bash
-openclaw cron add \
-  --name="qa_bot_full_cycle" \
-  --schedule="every 60s" \
-  --command="/usr/bin/env bash -lc 'cd /path/to/feishu_qa_bot_skill && bash scripts/run_qa_cycle.sh'"
+bash scripts/register_openclaw_cron.sh
 ```
 
 ## 5. 智能能力边界与方向

@@ -1,12 +1,12 @@
 # Ops profile (recommended for stable production)
 # 1) Poll messages every minute
-* * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_poller_once.sh >> /tmp/feishu_qa_bot.log 2>&1
+* * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_poller_once.sh >> /tmp/feishu_qa_bot.log 2>&1
 
 # 2) Sync knowledge every 10 minutes
-*/10 * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
+*/10 * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
 
 # 3) Sync intents snapshot every 15 minutes
-*/15 * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1
+*/15 * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1
 
 # 4) Optional daily smoke check at 08:30
-30 8 * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env python3 scripts/run_single_message.py --chat-id oc_xxx --sender-id ou_health --message "bot 活着吗" >> /tmp/feishu_qa_smoke.log 2>&1
+30 8 * * * cd /path/to/feishu-qa-bot && /usr/bin/env python3 scripts/run_single_message.py --chat-id oc_xxx --sender-id ou_health --message "bot 活着吗" >> /tmp/feishu_qa_smoke.log 2>&1

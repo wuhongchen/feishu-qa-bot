@@ -1,2 +1,2 @@
 # Full cycle: sync KB (if QA_KB_SOURCE set) then poll messages every minute
-* * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && QA_KB_SOURCE=/path/to/intents-source.json /usr/bin/env bash scripts/run_qa_cycle.sh >> /tmp/feishu_qa_fullcycle.log 2>&1
+* * * * * cd /path/to/feishu-qa-bot && QA_KB_SOURCE=/path/to/intents-source.json /usr/bin/env bash scripts/run_qa_cycle.sh >> /tmp/feishu_qa_fullcycle.log 2>&1

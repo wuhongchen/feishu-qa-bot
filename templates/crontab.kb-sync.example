@@ -1,2 +1,2 @@
 # Sync intents knowledge base every 10 minutes
-*/10 * * * * cd /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
+*/10 * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1

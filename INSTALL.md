@@ -3,7 +3,7 @@
 ## 1. 安装依赖
 
 ```bash
-cd feishu_qa_bot_skill
+cd feishu-qa-bot
 pip install -r requirements.txt
 ```
 
@@ -46,15 +46,24 @@ python3 group_qa_poller_v3.py
 QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 ```
 
-## 5. 配置定时任务
+## 5. 注入 OpenClaw 并注册原生调度
 
-你可以使用系统 cron 或 OpenClaw cron，每分钟执行一次轮询：
+先把技能注入到 OpenClaw skills 目录（软链模式）：
 
 ```bash
-openclaw cron add \
-  --name="qa_bot_poller" \
-  --schedule="every 60s" \
-  --command="/usr/bin/env bash -lc 'cd /path/to/feishu_qa_bot_skill && bash scripts/run_poller_once.sh'"
+bash scripts/inject_openclaw_skill.sh
+```
+
+再注册 OpenClaw 原生 cron（agent job，不是系统 shell cron）：
+
+```bash
+bash scripts/register_openclaw_cron.sh
+```
+
+查看调度状态：
+
+```bash
+openclaw cron list --all --json
 ```
 
 ## 6. 配置知识库定时同步（新增）
@@ -80,7 +89,7 @@ python3 scripts/sync_knowledge_base.py \
 加定时任务（每 10 分钟）：
 
 ```bash
-*/10 * * * * cd /path/to/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
+*/10 * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_kb_sync_once.sh >> /tmp/feishu_qa_kb_sync.log 2>&1
 ```
 
 说明：同步脚本默认严格校验（`QA_KB_STRICT=true`），校验失败会拒绝覆盖线上知识库。
@@ -102,7 +111,7 @@ python3 scripts/sync_intents_to_bitable.py
 独立定时任务（每 15 分钟）：
 
 ```bash
-*/15 * * * * cd /path/to/feishu_qa_bot_skill && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1
+*/15 * * * * cd /path/to/feishu-qa-bot && /usr/bin/env bash scripts/run_intent_sync_once.sh >> /tmp/feishu_qa_intent_sync.log 2>&1
 ```
 
 ## 8. 配置未命中 AI 搜索兜底（可选）
@@ -136,3 +145,9 @@ python3 scripts/sync_intents_to_bitable.py
 
 - 检查 `QA_BITABLE_TOKEN` 和 `QA_TABLE_ID`。
 - 检查应用权限 `bitable:app`、`base:record:create`。
+
+### 4) 为什么还是像“独立 cron”在跑
+
+- 先确认技能已注入：`openclaw skills list --json | rg feishu-qa-bot-skill`
+- 再确认是 OpenClaw cron job：`openclaw cron list --all`
+- 如果只看到系统 crontab，没有 OpenClaw cron，请重新执行 `bash scripts/register_openclaw_cron.sh`

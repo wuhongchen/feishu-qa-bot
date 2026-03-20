@@ -31,7 +31,7 @@
 ## 目录结构
 
 ```text
-feishu_qa_bot_skill/
+feishu-qa-bot/
 ├── SKILL.md
 ├── README.md
 ├── INSTALL.md
@@ -50,6 +50,8 @@ feishu_qa_bot_skill/
 │   ├── run_single_message.py
 │   ├── run_kb_sync_once.sh
 │   ├── run_intent_sync_once.sh
+│   ├── inject_openclaw_skill.sh
+│   ├── register_openclaw_cron.sh
 │   ├── sync_knowledge_base.py
 │   └── sync_intents_to_bitable.py
 ├── references/
@@ -69,7 +71,7 @@ feishu_qa_bot_skill/
 ## 快速开始
 
 ```bash
-cd feishu_qa_bot_skill
+cd feishu-qa-bot
 pip install -r requirements.txt
 cp .env.example .env
 python3 group_qa_handler.py
@@ -80,6 +82,14 @@ python3 group_qa_poller_v3.py
 
 ```bash
 QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
+```
+
+如果你希望注入到 OpenClaw 原生运行（推荐）：
+
+```bash
+bash scripts/inject_openclaw_skill.sh
+bash scripts/register_openclaw_cron.sh
+openclaw cron list --all --json
 ```
 
 如果你希望直接使用你给的 base 链接配置表格，可以设置：
@@ -193,5 +203,5 @@ python3 scripts/sync_intents_to_bitable.py --enabled false
 
 ```bash
 python3 /Users/hongchen/.codex/skills/openclaw-skill-creator/scripts/validate_openclaw_skill.py \
-  /Users/hongchen/Downloads/code/openclaw/feishu_qa_bot_skill
+  /path/to/feishu-qa-bot
 ```
