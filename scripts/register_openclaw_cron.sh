@@ -57,7 +57,7 @@ for job in jobs:
 ' "${target_name}"
 }
 
-FULLCYCLE_MESSAGE="请执行命令：cd ${SKILL_DIR} && bash scripts/run_qa_cycle.sh。读取输出 JSON 中的 broadcast.text 作为播报文案。回复要求：只输出一段自然中文播报，不要展示 JSON、字段名、代码块、技术指标。"
+FULLCYCLE_MESSAGE="请执行命令：cd ${SKILL_DIR} && QA_NOTIFY_ON_IDLE=false bash scripts/run_qa_cycle.sh。回复要求：严格只回复命令标准输出的原文，不要补充执行过程、不要生成 JSON、不要二次总结；如果命令无输出则本轮不回复。"
 HEALTH_MESSAGE="请执行命令：cd ${SKILL_DIR} && python3 scripts/run_single_message.py --chat-id ${DEFAULT_CHAT_ID} --sender-id ou_health --message \"bot 活着吗\"。返回 JSON 并标记是否 matched。"
 
 if ! LIST_RAW="$(openclaw cron list --all --json 2>&1)"; then

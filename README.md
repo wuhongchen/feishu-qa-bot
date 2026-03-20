@@ -91,6 +91,12 @@ python3 group_qa_poller_v3.py
 QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 ```
 
+全周期降噪默认行为：
+
+- `scripts/run_qa_cycle.sh` 只输出最终播报一句。
+- 空闲轮次默认静默（`QA_NOTIFY_ON_IDLE=false`）。
+- 同步过程日志写入 `QA_CYCLE_LOG_FILE`（默认 `/tmp/feishu_qa_cycle.log`）。
+
 如果你希望注入到 OpenClaw 原生运行（推荐）：
 
 ```bash
@@ -161,6 +167,8 @@ QA_ENABLE_AI_FALLBACK=true
 QA_AI_SEARCH_PROVIDER=openclaw
 QA_OPENCLAW_SEARCH_AGENT=main
 QA_OPENCLAW_TIMEOUT_SECONDS=90
+QA_FORCE_OPENCLAW=false
+QA_OPENCLAW_THEN_INTENT=true
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
@@ -173,6 +181,14 @@ QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openc
 - `msg_type=image` 会优先走 OpenClaw 图片识别链路，不经过本地意图匹配。
 - 回复内容直接使用自然语言，不附加技术模板。
 - 图片体积默认限制 5MB（`QA_IMAGE_MAX_BYTES`）。
+
+直连 OpenClaw 说明：
+- 当 `QA_FORCE_OPENCLAW=true` 时，文本消息将跳过本地意图匹配，直接走 OpenClaw。
+- 适用于你说的“消息 -> OpenClaw”模式。
+
+OpenClaw -> 意图匹配说明：
+- 当 `QA_OPENCLAW_THEN_INTENT=true` 时，文本消息先调用 OpenClaw，再进行本地意图匹配。
+- 若本地意图命中，优先使用本地意图答案；未命中则回退 OpenClaw 结果。
 
 如需改为 Tavily：
 

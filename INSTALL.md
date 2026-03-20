@@ -46,6 +46,11 @@ python3 group_qa_poller_v3.py
 QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 ```
 
+降噪参数（可选）：
+
+- `QA_NOTIFY_ON_IDLE=false`：空闲轮次不播报（默认）。
+- `QA_CYCLE_LOG_FILE=/tmp/feishu_qa_cycle.log`：同步/巡检详细日志落盘，不在群里展开。
+
 ## 5. 注入 OpenClaw 并注册原生调度
 
 先把技能注入到 OpenClaw skills 目录（软链模式）：
@@ -125,6 +130,8 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
 - `QA_OPENCLAW_TIMEOUT_SECONDS=90`
+- `QA_FORCE_OPENCLAW=true`（可选：文本消息直接走 OpenClaw，跳过意图匹配）
+- `QA_OPENCLAW_THEN_INTENT=true`（可选：先 OpenClaw，再意图匹配，命中意图则优先意图答案）
 - `QA_ENABLE_IMAGE_UNDERSTANDING=true`
 - `QA_IMAGE_MAX_BYTES=5000000`
 - `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）

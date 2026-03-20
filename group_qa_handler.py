@@ -50,6 +50,8 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
 MAX_ROUNDS = max(0, int(os.getenv("QA_MAX_ROUNDS", "0")))
 SESSION_TTL_MINUTES = max(5, int(os.getenv("QA_SESSION_TTL_MINUTES", "30")))
 ENABLE_NPS = _parse_bool(os.getenv("QA_ENABLE_NPS"), True)
+FORCE_OPENCLAW = _parse_bool(os.getenv("QA_FORCE_OPENCLAW"), False)
+OPENCLAW_THEN_INTENT = _parse_bool(os.getenv("QA_OPENCLAW_THEN_INTENT"), True)
 NPS_EXCLUDE_INTENTS = {"thanks", "bot_status"}
 NPS_EXCLUDE_INTENTS.update({"ai_search_fallback", "ai_search_no_result", "ai_search_blocked", "ai_search_unavailable"})
 
@@ -131,6 +133,16 @@ def match_question_with_fallback(question: str) -> Optional[dict]:
 def generate_fallback() -> str:
     """Backward-compat fallback text."""
     return "我暂时没理解这个问题，可以换个说法，或补充更具体的关键词。"
+
+
+def _build_openclaw_empty_rule() -> dict:
+    return {
+        "answer": "已触发 OpenClaw，但当前未返回结果，请稍后重试或 @助教。",
+        "source": "OpenClaw搜索/空响应",
+        "confidence": 0.2,
+        "intent": "ai_search_unavailable",
+        "links": [],
+    }
 
 
 def generate_reply(
@@ -244,31 +256,47 @@ def process_group_message(
     if nps_reply:
         return nps_reply, nps_record
 
-    # 1) Local intent first.
-    local_rule = match_question(message)
-    if local_rule:
-        rule = local_rule
-    else:
-        # 2) Record unmatched question for intent-library evolution.
-        try:
-            record_unmatched_question(
-                question=message,
-                chat_id=chat_id,
-                sender_id=sender_id,
-            )
-        except Exception:
-            pass
-        # 3) Try scoped AI search fallback.
+    if FORCE_OPENCLAW:
+        # Route all text messages directly to OpenClaw fallback/search.
         rule = build_ai_search_rule(message)
-        # 4) Keep a concise fallback when search service itself returns nothing.
         if not rule:
-            rule = {
-                "answer": "已触发搜索流程，但当前未返回结果，请稍后重试或 @助教。",
-                "source": "OpenClaw搜索/空响应",
-                "confidence": 0.2,
-                "intent": "ai_search_unavailable",
-                "links": [],
-            }
+            rule = _build_openclaw_empty_rule()
+    elif OPENCLAW_THEN_INTENT:
+        # OpenClaw first, then prefer local intent if matched.
+        openclaw_rule = build_ai_search_rule(message)
+        local_rule = match_question(message)
+        if local_rule:
+            rule = local_rule
+        else:
+            try:
+                record_unmatched_question(
+                    question=message,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                )
+            except Exception:
+                pass
+            rule = openclaw_rule or _build_openclaw_empty_rule()
+    else:
+        # 1) Local intent first.
+        local_rule = match_question(message)
+        if local_rule:
+            rule = local_rule
+        else:
+            # 2) Record unmatched question for intent-library evolution.
+            try:
+                record_unmatched_question(
+                    question=message,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                )
+            except Exception:
+                pass
+            # 3) Try scoped AI search fallback.
+            rule = build_ai_search_rule(message)
+            # 4) Keep a concise fallback when search service itself returns nothing.
+            if not rule:
+                rule = _build_openclaw_empty_rule()
 
     session["rounds"] += 1
 
