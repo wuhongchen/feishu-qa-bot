@@ -125,6 +125,8 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
 - `QA_OPENCLAW_TIMEOUT_SECONDS=90`
+- `QA_ENABLE_IMAGE_UNDERSTANDING=true`
+- `QA_IMAGE_MAX_BYTES=5000000`
 - `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
 - 需要本机 OpenClaw gateway 可用（`openclaw health` 可检查）
 
@@ -143,6 +145,11 @@ python3 scripts/sync_intents_to_bitable.py
 
 - 所有未命中问题会自动写入 `QA_INTENT_BACKLOG_FILE`（默认 `backups/intent_backlog.json`）
 - 可定期根据 backlog 把高频问题补充到 `intents.json`
+
+图片消息补充：
+
+- 群消息为图片（`msg_type=image`）时，会直接调用 OpenClaw 模型识别并回复。
+- 默认仅处理 5MB 以内图片（可通过 `QA_IMAGE_MAX_BYTES` 调整）。
 
 ## 常见问题
 

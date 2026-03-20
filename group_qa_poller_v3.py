@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Poll Feishu group messages and route to QA handler."""
 
+import base64
 import json
 import os
 import sys
@@ -18,8 +19,16 @@ from env_bootstrap import load_project_env  # noqa: E402
 from bitable_helper import create_record, resolve_app_and_table  # noqa: E402
 from feishu_app_auth import FeishuAppAuth  # noqa: E402
 from group_qa_handler import process_group_message  # noqa: E402
+from ai_search_fallback import build_ai_image_rule  # noqa: E402
 
 load_project_env(__file__)
+
+
+def _parse_bool(value: Optional[str], default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
 
 PROCESS_WINDOW_MINUTES = max(1, int(os.getenv("QA_PROCESS_WINDOW_MINUTES", "5")))
 APP_TOKEN = os.getenv("QA_BITABLE_TOKEN", "").strip()
@@ -28,6 +37,8 @@ TABLE_NAME = os.getenv("QA_TABLE_NAME", "").strip()
 BITABLE_BASE_URL = os.getenv("QA_BITABLE_BASE_URL", "").strip()
 DEDUP_CACHE_FILE = Path(os.getenv("QA_MSG_DEDUP_CACHE_FILE", "/tmp/feishu_qa_processed_messages.json"))
 DEDUP_TTL_MINUTES = max(PROCESS_WINDOW_MINUTES + 1, int(os.getenv("QA_MSG_DEDUP_TTL_MINUTES", "120")))
+ENABLE_IMAGE_UNDERSTANDING = _parse_bool(os.getenv("QA_ENABLE_IMAGE_UNDERSTANDING", "true"), True)
+IMAGE_MAX_BYTES = max(1024, int(os.getenv("QA_IMAGE_MAX_BYTES", "5000000")))
 
 _resolved_app_token: Optional[str] = None
 _resolved_table_id: Optional[str] = None
@@ -212,6 +223,89 @@ def extract_message_text(msg: dict) -> str:
         return ""
 
 
+def parse_message_payload(msg: dict) -> Tuple[str, str, str]:
+    """Return (msg_type, text, image_key)."""
+    msg_type = str(msg.get("msg_type", "")).strip().lower()
+    try:
+        body = json.loads(msg.get("body", {}).get("content", "{}"))
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    text = str(body.get("text", "")).strip()
+    image_key = ""
+    if msg_type == "image":
+        image_key = str(body.get("image_key") or body.get("file_key") or "").strip()
+    return msg_type, text, image_key
+
+
+def fetch_image_attachment(
+    token: str,
+    message_id: str,
+    image_key: str,
+) -> Tuple[Optional[Dict[str, str]], str]:
+    if not message_id or not image_key:
+        return None, "图片消息缺少 message_id 或 image_key"
+
+    url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{image_key}"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"type": "image"}
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+    except Exception as exc:
+        return None, f"下载图片资源失败: {exc}"
+
+    if response.status_code != 200:
+        text = response.text[:200] if response.text else ""
+        return None, f"下载图片资源失败: status={response.status_code} body={text}"
+
+    raw = response.content or b""
+    if not raw:
+        return None, "图片资源为空"
+    if len(raw) > IMAGE_MAX_BYTES:
+        return None, f"图片过大（{len(raw)} bytes），超过限制 {IMAGE_MAX_BYTES} bytes"
+
+    mime_type = (response.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip().lower()
+    if not mime_type.startswith("image/"):
+        mime_type = "image/jpeg"
+
+    attachment = {
+        "type": "image",
+        "mimeType": mime_type,
+        "fileName": f"{image_key}.img",
+        "content": base64.b64encode(raw).decode("ascii"),
+    }
+    return attachment, ""
+
+
+def build_image_record_fields(
+    chat_id: str,
+    sender_id: str,
+    image_key: str,
+    answer_text: str,
+    rule: Dict[str, object],
+) -> dict:
+    timestamp = int(datetime.now().timestamp() * 1000)
+    safe_sender = sender_id[-8:] if sender_id else "unknown"
+    safe_chat = chat_id[-8:] if chat_id else "unknown"
+    return {
+        "会话ID": f"img_{safe_chat}_{safe_sender}_{timestamp}",
+        "提问时间": timestamp,
+        "问题内容": f"[图片消息] image_key={image_key}",
+        "回答内容": answer_text,
+        "轮次": 1,
+        "状态": "待补充意图",
+        "是否解决": None,
+        "结束时间": None,
+        "NPS状态": None,
+        "知识来源": str(rule.get("source", "OpenClaw图片识别")),
+        "置信度": float(rule.get("confidence", 0.65)),
+        "意图分类": str(rule.get("intent", "ai_image_fallback")),
+    }
+
+
 def build_broadcast_text(
     window_minutes: int,
     total_processed: int,
@@ -268,12 +362,43 @@ def main() -> None:
             if not sender_id:
                 continue
 
-            text = extract_message_text(msg)
-            if not text:
-                continue
-
+            msg_type, text, image_key = parse_message_payload(msg)
             try:
-                reply, record_fields = process_group_message(chat_id, sender_id, text)
+                if msg_type == "image" and ENABLE_IMAGE_UNDERSTANDING:
+                    attachment, fetch_err = fetch_image_attachment(
+                        token=token,
+                        message_id=message_id,
+                        image_key=image_key,
+                    )
+                    if not attachment:
+                        reply = "图片收到了，但暂时无法读取图片内容。请稍后重试，或补充文字描述我先帮你处理。"
+                        record_fields = build_image_record_fields(
+                            chat_id=chat_id,
+                            sender_id=sender_id,
+                            image_key=image_key or "unknown",
+                            answer_text=reply,
+                            rule={
+                                "source": "OpenClaw图片识别/资源读取失败",
+                                "confidence": 0.2,
+                                "intent": "ai_image_unavailable",
+                            },
+                        )
+                        if fetch_err:
+                            errors.append(f"image fetch failed: {fetch_err}")
+                    else:
+                        image_rule = build_ai_image_rule(question=text, attachments=[attachment])
+                        reply = str(image_rule.get("answer", "")).strip()
+                        record_fields = build_image_record_fields(
+                            chat_id=chat_id,
+                            sender_id=sender_id,
+                            image_key=image_key or "unknown",
+                            answer_text=reply,
+                            rule=image_rule,
+                        )
+                else:
+                    if not text:
+                        continue
+                    reply, record_fields = process_group_message(chat_id, sender_id, text)
             except Exception as exc:
                 errors.append(f"process failed: {exc}")
                 continue
@@ -303,7 +428,8 @@ def main() -> None:
                 "chat_name": config.get("name", chat_id),
                 "sender_id": sender_id,
                 "message_id": message_id,
-                "question": text[:80],
+                "msg_type": msg_type or "unknown",
+                "question": (text if text else f"[{msg_type}]")[:80],
                 "matched": bool(reply),
                 "send_success": send_success,
                 "reply_mode": reply_mode,

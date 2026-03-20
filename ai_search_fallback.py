@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import requests
 
@@ -184,6 +185,27 @@ def _extract_payload_text_from_openclaw_response(payload: Dict[str, object]) -> 
     return "\n".join([x for x in texts if x]).strip()
 
 
+def _extract_openclaw_plain_text(payload: Dict[str, object], raw_text: str = "") -> str:
+    text = _extract_payload_text_from_openclaw_response(payload)
+    if text:
+        return text
+
+    for key in ("answer", "text", "message"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    result = payload.get("result")
+    if isinstance(result, dict):
+        nested = _extract_openclaw_plain_text(result, "")
+        if nested:
+            return nested
+
+    if raw_text:
+        return raw_text.strip()
+    return ""
+
+
 def _search_with_openclaw_agent(
     question: str,
     allowed_domains: List[str],
@@ -279,6 +301,63 @@ def _search_with_openclaw_agent(
     return answer, items, ""
 
 
+def _call_openclaw_agent_with_attachments(
+    message: str,
+    attachments: Optional[List[Dict[str, str]]],
+    timeout_seconds: int,
+) -> Tuple[str, str]:
+    """Call OpenClaw gateway agent API with optional image attachments."""
+    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
+    params: Dict[str, object] = {
+        "message": str(message or "").strip(),
+        "agentId": agent_id,
+        "timeout": max(30, timeout_seconds),
+        "idempotencyKey": f"qa-img-{uuid4().hex}",
+    }
+    if attachments:
+        params["attachments"] = attachments
+
+    cmd = [
+        "openclaw",
+        "gateway",
+        "call",
+        "agent",
+        "--expect-final",
+        "--json",
+        "--timeout",
+        str(max(30000, (timeout_seconds + 15) * 1000)),
+        "--params",
+        json.dumps(params, ensure_ascii=False),
+    ]
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(45, timeout_seconds + 20),
+        )
+    except Exception as exc:
+        return "", f"openclaw_gateway_exec_failed: {exc}"
+
+    combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
+    if completed.returncode != 0:
+        return "", f"openclaw_gateway_non_zero_exit: {combined[:240]}"
+
+    payload = _extract_first_json_block(combined)
+    if not isinstance(payload, dict):
+        text = combined.strip()
+        if _looks_like_openclaw_error_text(text):
+            return "", f"openclaw_gateway_text_error: {text[:240]}"
+        return text, ""
+
+    text = _extract_openclaw_plain_text(payload, combined)
+    if _looks_like_openclaw_error_text(text):
+        return "", f"openclaw_gateway_answer_error: {text[:240]}"
+    return text, ""
+
+
 def _looks_like_openclaw_error_text(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
@@ -305,6 +384,42 @@ def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) ->
     lines.append("")
     lines.append(f"来源范围：{domains}")
     return "\n".join(lines)
+
+
+def build_ai_image_rule(question: str, attachments: Optional[List[Dict[str, str]]]) -> Dict[str, object]:
+    """Directly ask OpenClaw to understand image attachments and reply in Chinese."""
+    timeout_seconds = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
+    user_question = str(question or "").strip()
+    prompt = (
+        "你是飞书群答疑助手，请结合用户问题和图片内容直接回复。\n"
+        "要求：\n"
+        "1) 使用简体中文，语气自然，不要输出技术细节\n"
+        "2) 回答尽量简洁，优先给可执行建议\n"
+        "3) 如果图片不清晰或无法判断，请明确说明并提示用户补充更清晰图片/上下文\n"
+        f"用户问题：{user_question or '（未提供文字问题，请先概括图片关键信息后给建议）'}"
+    )
+
+    answer, err = _call_openclaw_agent_with_attachments(
+        message=prompt,
+        attachments=attachments,
+        timeout_seconds=timeout_seconds,
+    )
+    if err or not answer.strip():
+        return {
+            "answer": "图片已收到，但当前识别服务暂不可用。请稍后再试，或补充文字描述我先帮你处理。",
+            "source": "OpenClaw图片识别/不可用",
+            "confidence": 0.2,
+            "intent": "ai_image_unavailable",
+            "links": [],
+        }
+
+    return {
+        "answer": answer.strip(),
+        "source": "OpenClaw图片识别",
+        "confidence": 0.65,
+        "intent": "ai_image_fallback",
+        "links": [],
+    }
 
 
 def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
