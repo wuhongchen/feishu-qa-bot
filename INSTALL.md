@@ -54,7 +54,7 @@ QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 openclaw cron add \
   --name="qa_bot_poller" \
   --schedule="every 60s" \
-  --command="python3 /path/to/feishu_qa_bot_skill/group_qa_poller_v3.py"
+  --command="/usr/bin/env bash -lc 'cd /path/to/feishu_qa_bot_skill && bash scripts/run_poller_once.sh'"
 ```
 
 ## 6. 配置知识库定时同步（新增）

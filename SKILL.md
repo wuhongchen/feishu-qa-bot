@@ -236,7 +236,7 @@ bash scripts/run_qa_cycle.sh
 openclaw cron add \
   --name="qa_bot_full_cycle" \
   --schedule="every 60s" \
-  --command="bash /path/to/feishu_qa_bot_skill/scripts/run_qa_cycle.sh"
+  --command="/usr/bin/env bash -lc 'cd /path/to/feishu_qa_bot_skill && bash scripts/run_qa_cycle.sh'"
 ```
 
 ## 5. 智能能力边界与方向
