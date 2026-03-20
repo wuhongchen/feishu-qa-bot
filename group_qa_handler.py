@@ -31,6 +31,15 @@ def _parse_bool(value: Optional[str], default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _should_append_meta(rule: dict) -> bool:
+    if not _parse_bool(os.getenv("QA_REPLY_APPEND_META", "true"), True):
+        return False
+    intent = str((rule or {}).get("intent", "")).strip()
+    if intent.startswith("ai_search_"):
+        return _parse_bool(os.getenv("QA_AI_REPLY_APPEND_META", "false"), False)
+    return True
+
+
 QA_BITABLE_TOKEN = os.getenv("QA_BITABLE_TOKEN", "")
 QA_TABLE_ID = os.getenv("QA_TABLE_ID", "")
 _default_chats = "oc_839e988db57d1c706a89ba2bc3667dda,oc_004b8ddf9f113e547f4b13d814cd4619"
@@ -140,7 +149,8 @@ def generate_reply(
         for link in links:
             reply += f"\n- {link['name']}: {link['url']}"
 
-    reply += f"\n\n---\n来源: {rule['source']}\n置信度: {int(rule['confidence'] * 100)}%"
+    if _should_append_meta(rule):
+        reply += f"\n\n---\n来源: {rule['source']}\n置信度: {int(rule['confidence'] * 100)}%"
 
     if add_nps_prompt and question:
         short_question = question[:40] + "..." if len(question) > 40 else question

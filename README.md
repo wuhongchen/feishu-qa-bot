@@ -159,10 +159,12 @@ python3 scripts/sync_knowledge_base.py \
 QA_ENABLE_AI_FALLBACK=true
 QA_AI_SEARCH_PROVIDER=openclaw
 QA_OPENCLAW_SEARCH_AGENT=main
+QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
 ```
 
 说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
+默认不附加技术尾注（来源/置信度），可通过 `QA_AI_REPLY_APPEND_META=true` 打开。
 
 如需改为 Tavily：
 

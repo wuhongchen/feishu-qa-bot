@@ -188,7 +188,7 @@ def _search_with_openclaw_agent(
     question: str,
     allowed_domains: List[str],
     max_results: int,
-    timeout: int,
+    timeout_seconds: int,
 ) -> Tuple[str, List[SearchItem], str]:
     agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
     model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
@@ -213,7 +213,7 @@ def _search_with_openclaw_agent(
         agent_id,
         "--json",
         "--timeout",
-        str(max(10, timeout)),
+        str(max(30, timeout_seconds)),
         "--message",
         prompt,
     ]
@@ -226,7 +226,7 @@ def _search_with_openclaw_agent(
             check=False,
             capture_output=True,
             text=True,
-            timeout=max(15, timeout + 10),
+            timeout=max(45, timeout_seconds + 15),
         )
     except Exception as exc:
         return "", [], f"openclaw_exec_failed: {exc}"
@@ -250,11 +250,15 @@ def _search_with_openclaw_agent(
     if not isinstance(inner, dict):
         # Allow plain text answers if model does not return strict JSON.
         answer_text = content.strip()
+        if _looks_like_openclaw_error_text(answer_text):
+            return "", [], f"openclaw_text_error: {answer_text[:240]}"
         if answer_text:
             return answer_text, [], ""
         return "", [], "openclaw_output_not_json"
 
     answer = str(inner.get("answer", "")).strip()
+    if _looks_like_openclaw_error_text(answer):
+        return "", [], f"openclaw_answer_error: {answer[:240]}"
     sources_raw = inner.get("sources", [])
     items: List[SearchItem] = []
     if isinstance(sources_raw, list):
@@ -273,6 +277,23 @@ def _search_with_openclaw_agent(
                 break
 
     return answer, items, ""
+
+
+def _looks_like_openclaw_error_text(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    lower = raw.lower()
+    patterns = [
+        "request timed out before a response was generated",
+        "please try again, or increase `agents.defaults.timeoutseconds`",
+        "gateway agent failed",
+        "gateway closed",
+        "failovererror",
+        "no api key found for provider",
+        "error:",
+    ]
+    return any(p in lower for p in patterns)
 
 
 def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) -> str:
@@ -326,14 +347,15 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
 
     allowed_domains = _parse_csv(os.getenv("QA_AI_SEARCH_ALLOWED_DOMAINS"), DEFAULT_ALLOWED_DOMAINS)
     max_results = max(1, int(os.getenv("QA_AI_SEARCH_MAX_RESULTS", "3")))
-    timeout = max(3, int(os.getenv("QA_AI_SEARCH_TIMEOUT", "10")))
+    tavily_timeout = max(3, int(os.getenv("QA_AI_SEARCH_TIMEOUT", "10")))
+    openclaw_timeout = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
 
     if provider == "openclaw":
         answer_text, items, err = _search_with_openclaw_agent(
             question=question,
             allowed_domains=allowed_domains,
             max_results=max_results,
-            timeout=timeout,
+            timeout_seconds=openclaw_timeout,
         )
         if err:
             return {
@@ -384,7 +406,7 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         question=question,
         allowed_domains=allowed_domains,
         max_results=max_results,
-        timeout=timeout,
+        timeout=tavily_timeout,
     )
     if not items:
         return {

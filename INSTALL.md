@@ -124,6 +124,7 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_ENABLE_AI_FALLBACK=true`
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
+- `QA_OPENCLAW_TIMEOUT_SECONDS=90`
 - `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
 - 需要本机 OpenClaw gateway 可用（`openclaw health` 可检查）
 
