@@ -157,23 +157,41 @@ def is_recent_message(msg: dict, minutes: int = PROCESS_WINDOW_MINUTES) -> bool:
         return False
 
 
-def send_reply(token: str, chat_id: str, content: str) -> bool:
-    url = "https://open.feishu.cn/open-apis/im/v1/messages"
+def send_reply(token: str, chat_id: str, content: str, reply_to_message_id: str = "") -> Tuple[bool, str]:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"msg_type": "text", "content": json.dumps({"text": content})}
+
+    # Prefer replying to the original message for better context threading.
+    if reply_to_message_id:
+        reply_url = f"https://open.feishu.cn/open-apis/im/v1/messages/{reply_to_message_id}/reply"
+        try:
+            response = requests.post(reply_url, headers=headers, json=payload, timeout=8)
+            body = response.json()
+            if body.get("code") == 0:
+                return True, "reply"
+            print(
+                f"[WARN] reply-to-message failed for {chat_id}/{reply_to_message_id}: "
+                f"{body.get('msg', body)}; fallback to chat send",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            print(
+                f"[WARN] reply-to-message exception for {chat_id}/{reply_to_message_id}: {exc}; "
+                "fallback to chat send",
+                file=sys.stderr,
+            )
+
+    url = "https://open.feishu.cn/open-apis/im/v1/messages"
     params = {"receive_id_type": "chat_id"}
-    payload = {
-        "receive_id": chat_id,
-        "msg_type": "text",
-        "content": json.dumps({"text": content}),
-    }
+    payload["receive_id"] = chat_id
 
     try:
         response = requests.post(url, headers=headers, params=params, json=payload, timeout=8)
         body = response.json()
-        return body.get("code") == 0
+        return body.get("code") == 0, "chat"
     except Exception as exc:
         print(f"[ERROR] send_reply failed for {chat_id}: {exc}", file=sys.stderr)
-        return False
+        return False, "failed"
 
 
 def write_record(token: str, fields: dict) -> Tuple[bool, str]:
@@ -241,6 +259,7 @@ def main() -> None:
                 continue
 
             send_success: Optional[bool] = None
+            reply_mode = ""
             write_success: Optional[bool] = None
             write_result = ""
 
@@ -250,7 +269,12 @@ def main() -> None:
                 continue
 
             if reply:
-                send_success = send_reply(token, chat_id, reply)
+                send_success, reply_mode = send_reply(
+                    token=token,
+                    chat_id=chat_id,
+                    content=reply,
+                    reply_to_message_id=message_id,
+                )
             if record_fields:
                 write_success, write_result = write_record(token, record_fields)
 
@@ -262,6 +286,7 @@ def main() -> None:
                 "question": text[:80],
                 "matched": bool(reply),
                 "send_success": send_success,
+                "reply_mode": reply_mode,
                 "write_success": write_success,
             }
 
