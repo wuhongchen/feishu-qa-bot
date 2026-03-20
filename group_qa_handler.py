@@ -279,8 +279,8 @@ def process_group_message(
             backlog_id, backlog_count = "", 0
         # 3) Try scoped AI search fallback.
         rule = build_ai_search_rule(message)
-        # 4) Always respond even if search has no answer.
-        if not rule:
+        # 4) Always respond even if search has no answer or service unavailable.
+        if (not rule) or rule.get("intent") in {"ai_search_no_result", "ai_search_unavailable"}:
             rule = build_general_qa_rule(message, backlog_id=backlog_id, backlog_count=backlog_count)
 
     session["rounds"] += 1

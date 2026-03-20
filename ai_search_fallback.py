@@ -3,6 +3,8 @@
 
 import os
 import re
+import json
+import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -140,6 +142,102 @@ def _search_with_tavily(question: str, allowed_domains: List[str], max_results: 
     return out
 
 
+def _extract_first_json_block(text: str) -> Optional[Dict[str, object]]:
+    raw = str(text or "")
+    start = raw.find("{")
+    if start < 0:
+        return None
+    snippet = raw[start:]
+    try:
+        return json.loads(snippet)
+    except Exception:
+        pass
+
+    for end in range(len(snippet), start, -1):
+        chunk = snippet[:end]
+        try:
+            return json.loads(chunk)
+        except Exception:
+            continue
+    return None
+
+
+def _search_with_openclaw_agent(
+    question: str,
+    allowed_domains: List[str],
+    max_results: int,
+    timeout: int,
+) -> Tuple[str, List[SearchItem], str]:
+    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
+    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
+    domain_text = ", ".join(allowed_domains[:10])
+
+    prompt = (
+        "你是知识检索助手。请先检索再回答。\n"
+        f"仅允许引用这些域名：{domain_text}\n"
+        "输出必须是严格 JSON，不要输出任何额外文本：\n"
+        "{\n"
+        '  "answer": "给用户的简洁回答（120字内）",\n'
+        '  "sources": [{"title":"标题","url":"https://...","snippet":"20-80字摘要"}]\n'
+        "}\n"
+        f"sources 最多 {max(1, min(6, max_results))} 条。\n"
+        f"用户问题：{question}"
+    )
+
+    cmd = [
+        "openclaw",
+        "agent",
+        "--agent",
+        agent_id,
+        "--json",
+        "--timeout",
+        str(max(10, timeout)),
+        "--message",
+        prompt,
+    ]
+    if model:
+        cmd.extend(["--model", model])
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(15, timeout + 10),
+        )
+    except Exception as exc:
+        return "", [], f"openclaw_exec_failed: {exc}"
+
+    combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
+    if completed.returncode != 0:
+        return "", [], f"openclaw_non_zero_exit: {combined[:240]}"
+
+    payload = _extract_first_json_block(combined)
+    if not isinstance(payload, dict):
+        return "", [], "openclaw_output_not_json"
+
+    answer = str(payload.get("answer", "")).strip()
+    sources_raw = payload.get("sources", [])
+    items: List[SearchItem] = []
+    if isinstance(sources_raw, list):
+        for row in sources_raw:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title", "")).strip()
+            url = str(row.get("url", "")).strip()
+            snippet = _clean_snippet(str(row.get("snippet", "")).strip())
+            if not title or not url or not snippet:
+                continue
+            if not _is_allowed_domain(url, allowed_domains):
+                continue
+            items.append(SearchItem(title=title, url=url, snippet=snippet))
+            if len(items) >= max(1, min(8, max_results)):
+                break
+
+    return answer, items, ""
+
+
 def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) -> str:
     lines = ["我没有命中本地知识库，但在限定范围内检索到这些信息："]
     for idx, item in enumerate(items, start=1):
@@ -154,7 +252,9 @@ def _build_scoped_answer(items: List[SearchItem], allowed_domains: List[str]) ->
 
 def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
     """Return a pseudo-intent rule for unmatched question, or None."""
-    enabled = _parse_bool(os.getenv("QA_ENABLE_AI_FALLBACK"), False)
+    provider = os.getenv("QA_AI_SEARCH_PROVIDER", "openclaw").strip().lower()
+    enabled_default = provider == "openclaw"
+    enabled = _parse_bool(os.getenv("QA_ENABLE_AI_FALLBACK"), enabled_default)
     if not enabled:
         return None
 
@@ -183,10 +283,51 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
             "links": [],
         }
 
-    provider = os.getenv("QA_AI_SEARCH_PROVIDER", "tavily").strip().lower()
     allowed_domains = _parse_csv(os.getenv("QA_AI_SEARCH_ALLOWED_DOMAINS"), DEFAULT_ALLOWED_DOMAINS)
     max_results = max(1, int(os.getenv("QA_AI_SEARCH_MAX_RESULTS", "3")))
     timeout = max(3, int(os.getenv("QA_AI_SEARCH_TIMEOUT", "10")))
+
+    if provider == "openclaw":
+        answer_text, items, err = _search_with_openclaw_agent(
+            question=question,
+            allowed_domains=allowed_domains,
+            max_results=max_results,
+            timeout=timeout,
+        )
+        if err:
+            return {
+                "answer": (
+                    "未命中本地知识库，且 OpenClaw 搜索当前不可用。"
+                    "\n我会先进入普通问答兜底，并把该问题加入意图补充库。"
+                ),
+                "source": "OpenClaw搜索/不可用",
+                "confidence": 0.2,
+                "intent": "ai_search_unavailable",
+                "links": [],
+            }
+
+        if not answer_text and not items:
+            return {
+                "answer": (
+                    "我没有命中本地知识库，也未在限定搜索范围内找到足够可靠的信息。"
+                    "\n我会先按普通问答给你可执行建议。"
+                ),
+                "source": "OpenClaw搜索/无结果",
+                "confidence": 0.25,
+                "intent": "ai_search_no_result",
+                "links": [],
+            }
+
+        answer = answer_text or _build_scoped_answer(items, allowed_domains)
+        links = [{"name": item.title[:32], "url": item.url} for item in items]
+        confidence = min(0.78, 0.48 + len(items) * 0.08)
+        return {
+            "answer": answer,
+            "source": "OpenClaw搜索/白名单站点",
+            "confidence": confidence,
+            "intent": "ai_search_fallback",
+            "links": links,
+        }
 
     if provider != "tavily":
         return {

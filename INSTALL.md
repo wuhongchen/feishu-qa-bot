@@ -120,9 +120,15 @@ python3 scripts/sync_intents_to_bitable.py
 如果你希望未命中时优先给出带来源的检索答复，可以开启受控 AI 搜索兜底：
 
 - `QA_ENABLE_AI_FALLBACK=true`
+- `QA_AI_SEARCH_PROVIDER=openclaw`
+- `QA_OPENCLAW_SEARCH_AGENT=main`
+- `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
+- 需要本机 OpenClaw gateway 可用（`openclaw health` 可检查）
+
+如果你要改为 Tavily，再补：
+
 - `QA_AI_SEARCH_PROVIDER=tavily`
 - `QA_TAVILY_API_KEY=...`
-- `QA_AI_SEARCH_ALLOWED_DOMAINS=...`（强烈建议只放业务域名）
 
 边界机制：
 

@@ -8,7 +8,7 @@
 - 意图库条目校验（去重、字段归一化、可启停、优先级与排除词）
 - 自动群聊问答（配置群内消息都会处理，不再静默未命中）
 - 所有问题入库（命中与未命中都会写入 bitable）
-- 未命中兜底 AI 搜索（白名单域名 + 禁答词边界，默认关闭）
+- 未命中兜底 AI 搜索（白名单域名 + 禁答词边界，默认走 OpenClaw 搜索）
 - 未命中问题自动沉淀到本地意图补充库（`backups/intent_backlog.json`）
 - 首轮 NPS 评分收集（0-10 分）
 - 问答记录写入飞书多维表格
@@ -137,7 +137,7 @@ python3 scripts/sync_knowledge_base.py \
 
 ## 未命中 AI 搜索兜底（新增）
 
-默认关闭，仅在 `QA_ENABLE_AI_FALLBACK=true` 时生效。
+默认启用（`QA_AI_SEARCH_PROVIDER=openclaw`），在本地意图未命中时直接走 OpenClaw 搜索。
 
 触发条件：
 
@@ -155,9 +155,18 @@ python3 scripts/sync_knowledge_base.py \
 
 ```bash
 QA_ENABLE_AI_FALLBACK=true
+QA_AI_SEARCH_PROVIDER=openclaw
+QA_OPENCLAW_SEARCH_AGENT=main
+QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
+```
+
+说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会自动回退到普通问答。
+
+如需改为 Tavily：
+
+```bash
 QA_AI_SEARCH_PROVIDER=tavily
 QA_TAVILY_API_KEY=tvly-xxxx
-QA_AI_SEARCH_ALLOWED_DOMAINS=waytoagi.feishu.cn,t0woxppdywz.feishu.cn,docs.openclaw.ai,openclaw.ai,clawhub.com
 ```
 
 即便 AI 搜索未开启或无结果，系统也会返回“普通问答”兜底回复，并把该问题写入意图补充库，避免群里无响应。

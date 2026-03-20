@@ -168,10 +168,11 @@ minOpenClawVersion: 0.1.0
 - `QA_KB_SOURCE_HEADERS`：可选请求头 JSON。
 - `QA_SYNC_INTENTS_TO_BITABLE=true|false`：是否在周期任务中同步意图库到表格。
 
-### 2.4 AI 搜索兜底配置（默认关闭）
+### 2.4 AI 搜索兜底配置（默认 OpenClaw）
 
 - `QA_ENABLE_AI_FALLBACK=true|false`
-- `QA_AI_SEARCH_PROVIDER=tavily`
+- `QA_AI_SEARCH_PROVIDER=openclaw`
+- `QA_OPENCLAW_SEARCH_AGENT=main`
 - `QA_TAVILY_API_KEY=tvly-...`
 - `QA_AI_SEARCH_ALLOWED_DOMAINS=a.com,b.com`
 - `QA_AI_SEARCH_MAX_RESULTS=3`
