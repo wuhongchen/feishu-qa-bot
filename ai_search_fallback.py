@@ -4,6 +4,7 @@
 import os
 import re
 import json
+import time
 import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -40,6 +41,9 @@ class SearchItem:
     title: str
     url: str
     snippet: str
+
+
+_OPENCLAW_COOLDOWN_UNTIL_TS = 0.0
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -177,11 +181,47 @@ def _extract_openclaw_plain_text(payload: Dict[str, object], raw_text: str = "")
     return ""
 
 
+def _openclaw_process_timeout_seconds(default_seconds: int = 20) -> int:
+    """Hard timeout for openclaw subprocess to avoid cron-level SIGTERM."""
+    try:
+        return max(8, int(os.getenv("QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS", str(default_seconds))))
+    except Exception:
+        return max(8, default_seconds)
+
+
+def _openclaw_cooldown_seconds(default_seconds: int = 120) -> int:
+    try:
+        return max(10, int(os.getenv("QA_OPENCLAW_COOLDOWN_SECONDS", str(default_seconds))))
+    except Exception:
+        return max(10, default_seconds)
+
+
+def _openclaw_cooldown_remaining_seconds() -> int:
+    now = time.time()
+    if _OPENCLAW_COOLDOWN_UNTIL_TS <= now:
+        return 0
+    return int(_OPENCLAW_COOLDOWN_UNTIL_TS - now)
+
+
+def _trip_openclaw_cooldown() -> None:
+    global _OPENCLAW_COOLDOWN_UNTIL_TS
+    _OPENCLAW_COOLDOWN_UNTIL_TS = time.time() + _openclaw_cooldown_seconds()
+
+
+def _clear_openclaw_cooldown() -> None:
+    global _OPENCLAW_COOLDOWN_UNTIL_TS
+    _OPENCLAW_COOLDOWN_UNTIL_TS = 0.0
+
+
 def _search_with_openclaw_agent(
     question: str,
     max_results: int,
     timeout_seconds: int,
 ) -> Tuple[str, List[SearchItem], str]:
+    cooldown_left = _openclaw_cooldown_remaining_seconds()
+    if cooldown_left > 0:
+        return "", [], f"openclaw_cooldown_active: {cooldown_left}s"
+
     agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
     model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
 
@@ -210,19 +250,25 @@ def _search_with_openclaw_agent(
     if model:
         cmd.extend(["--model", model])
 
+    process_timeout = _openclaw_process_timeout_seconds(default_seconds=20)
     try:
         completed = subprocess.run(
             cmd,
             check=False,
             capture_output=True,
             text=True,
-            timeout=max(45, timeout_seconds + 15),
+            timeout=process_timeout,
         )
+    except subprocess.TimeoutExpired:
+        _trip_openclaw_cooldown()
+        return "", [], f"openclaw_exec_timeout: {process_timeout}s"
     except Exception as exc:
+        _trip_openclaw_cooldown()
         return "", [], f"openclaw_exec_failed: {exc}"
 
     combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
     if completed.returncode != 0:
+        _trip_openclaw_cooldown()
         return "", [], f"openclaw_non_zero_exit: {combined[:240]}"
 
     payload = _extract_first_json_block(combined)
@@ -264,6 +310,7 @@ def _search_with_openclaw_agent(
             if len(items) >= max(1, min(8, max_results)):
                 break
 
+    _clear_openclaw_cooldown()
     return answer, items, ""
 
 
@@ -273,6 +320,10 @@ def _call_openclaw_agent_with_attachments(
     timeout_seconds: int,
 ) -> Tuple[str, str]:
     """Call OpenClaw gateway agent API with optional image attachments."""
+    cooldown_left = _openclaw_cooldown_remaining_seconds()
+    if cooldown_left > 0:
+        return "", f"openclaw_cooldown_active: {cooldown_left}s"
+
     agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
     params: Dict[str, object] = {
         "message": str(message or "").strip(),
@@ -283,6 +334,7 @@ def _call_openclaw_agent_with_attachments(
     if attachments:
         params["attachments"] = attachments
 
+    gateway_timeout_ms = max(3000, int(os.getenv("QA_OPENCLAW_GATEWAY_TIMEOUT_MS", "12000")))
     cmd = [
         "openclaw",
         "gateway",
@@ -291,36 +343,45 @@ def _call_openclaw_agent_with_attachments(
         "--expect-final",
         "--json",
         "--timeout",
-        str(max(30000, (timeout_seconds + 15) * 1000)),
+        str(gateway_timeout_ms),
         "--params",
         json.dumps(params, ensure_ascii=False),
     ]
 
+    process_timeout = _openclaw_process_timeout_seconds(default_seconds=max(12, gateway_timeout_ms // 1000 + 4))
     try:
         completed = subprocess.run(
             cmd,
             check=False,
             capture_output=True,
             text=True,
-            timeout=max(45, timeout_seconds + 20),
+            timeout=process_timeout,
         )
+    except subprocess.TimeoutExpired:
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_gateway_timeout: {process_timeout}s"
     except Exception as exc:
+        _trip_openclaw_cooldown()
         return "", f"openclaw_gateway_exec_failed: {exc}"
 
     combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
     if completed.returncode != 0:
+        _trip_openclaw_cooldown()
         return "", f"openclaw_gateway_non_zero_exit: {combined[:240]}"
 
     payload = _extract_first_json_block(combined)
     if not isinstance(payload, dict):
         text = combined.strip()
         if _looks_like_openclaw_error_text(text):
+            _trip_openclaw_cooldown()
             return "", f"openclaw_gateway_text_error: {text[:240]}"
         return text, ""
 
     text = _extract_openclaw_plain_text(payload, combined)
     if _looks_like_openclaw_error_text(text):
+        _trip_openclaw_cooldown()
         return "", f"openclaw_gateway_answer_error: {text[:240]}"
+    _clear_openclaw_cooldown()
     return text, ""
 
 

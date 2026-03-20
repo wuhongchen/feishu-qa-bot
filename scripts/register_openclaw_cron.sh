@@ -58,7 +58,7 @@ for job in jobs:
 }
 
 FULLCYCLE_MESSAGE="请执行命令：cd ${SKILL_DIR} && QA_NOTIFY_ON_IDLE=false bash scripts/run_qa_cycle.sh。回复要求：严格只回复命令标准输出的原文，不要补充执行过程、不要生成 JSON、不要二次总结；如果命令无输出则本轮不回复。"
-HEALTH_MESSAGE="请执行命令：cd ${SKILL_DIR} && python3 scripts/run_single_message.py --chat-id ${DEFAULT_CHAT_ID} --sender-id ou_health --message \"bot 活着吗\"。返回 JSON 并标记是否 matched。"
+HEALTH_MESSAGE="请执行命令：cd ${SKILL_DIR} && python3 scripts/run_single_message.py --chat-id ${DEFAULT_CHAT_ID} --sender-id ou_health --message \"bot 活着吗\" | python3 -c 'import json,sys;raw=sys.stdin.read();start=raw.find(\"{\");print(\"{}\" if start<0 else json.dumps(json.loads(raw[start:]), ensure_ascii=False))'。只输出该 JSON，不要补充说明。"
 
 if ! LIST_RAW="$(openclaw cron list --all --json 2>&1)"; then
   echo "OpenClaw cron 网关不可用，请先启动 OpenClaw Desktop 或本地 Gateway 服务后重试。" >&2
