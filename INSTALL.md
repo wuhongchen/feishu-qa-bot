@@ -60,6 +60,8 @@ bash scripts/inject_openclaw_skill.sh
 bash scripts/register_openclaw_cron.sh
 ```
 
+如果你调整了播报文案策略，也需要重新执行一次上面的注册脚本，使 cron 任务提示词生效。
+
 查看调度状态：
 
 ```bash

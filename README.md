@@ -30,6 +30,8 @@
 - `feishu_app_auth.py`: 飞书 token 获取与缓存
 - `quick_group_qa.py`: 向后兼容包装层
 
+轮询输出里新增 `broadcast.text`，用于对外播报（非技术化描述）。
+
 ## 目录结构
 
 ```text

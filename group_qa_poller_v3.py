@@ -212,6 +212,26 @@ def extract_message_text(msg: dict) -> str:
         return ""
 
 
+def build_broadcast_text(
+    window_minutes: int,
+    total_processed: int,
+    skipped_old: int,
+    records_created_count: int,
+    error_count: int,
+) -> str:
+    if error_count > 0:
+        return f"本轮巡检已完成，发现 {error_count} 个异常，已记录待处理，请管理员关注。"
+
+    if total_processed <= 0:
+        if skipped_old > 0:
+            return f"本轮巡检完成，最近 {window_minutes} 分钟没有新的问答消息。"
+        return f"本轮巡检完成，最近 {window_minutes} 分钟暂无需要处理的消息。"
+
+    if records_created_count > 0:
+        return f"本轮共处理 {total_processed} 条问答消息，已新增 {records_created_count} 条记录。"
+    return f"本轮共处理 {total_processed} 条问答消息，机器人已完成回复。"
+
+
 def main() -> None:
     token = get_token()
     if not token:
@@ -311,6 +331,16 @@ def main() -> None:
         "records_created": records_created,
         "errors": errors,
         "tasks": tasks,
+        "broadcast": {
+            "title": "QA 机器人巡检播报",
+            "text": build_broadcast_text(
+                window_minutes=PROCESS_WINDOW_MINUTES,
+                total_processed=len(tasks),
+                skipped_old=skipped_old,
+                records_created_count=len(records_created),
+                error_count=len(errors),
+            ),
+        },
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
