@@ -9,6 +9,8 @@ capabilities:
     description: 基于 intents.json 的动态意图识别（支持去重、阈值、优先级、排除词）
   - id: reply-with-template
     description: 按统一文案模板生成结构化回复并附带来源与链接
+  - id: append-intent-note
+    description: 保持原始问答主流程不变，在会话回复中补充意图识别说明
   - id: ai-search-fallback
     description: 本地意图未命中时执行 AI 搜索兜底
   - id: collect-nps
@@ -40,6 +42,8 @@ permissions:
     - QA_CHAT_NAMES
     - ADMIN_USER_ID
     - QA_ENABLE_NPS
+    - QA_APPEND_INTENT_NOTE
+    - QA_APPEND_INTENT_NOTE_ON_UNMATCH
     - QA_MAX_ROUNDS
     - QA_SESSION_TTL_MINUTES
     - QA_PROCESS_WINDOW_MINUTES
@@ -150,6 +154,8 @@ minOpenClawVersion: 0.1.0
 ### 2.2 行为配置
 
 - `QA_ENABLE_NPS=true|false`：是否开启 NPS。
+- `QA_APPEND_INTENT_NOTE=true|false`：命中意图时是否附加简短识别说明。
+- `QA_APPEND_INTENT_NOTE_ON_UNMATCH=true|false`：未命中时是否也附加说明。
 - `QA_MAX_ROUNDS=0|N`：单会话最大轮次，`0` 表示不限制。
 - `QA_SESSION_TTL_MINUTES=30`：会话超时重建阈值。
 - `QA_PROCESS_WINDOW_MINUTES=5`：轮询时消息时间窗口。

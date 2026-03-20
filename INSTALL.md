@@ -133,8 +133,8 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20`（防止 openclaw 子进程长时间卡住）
 - `QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000`（gateway call 超时，毫秒）
 - `QA_OPENCLAW_COOLDOWN_SECONDS=120`（超时后熔断冷却秒数，避免反复阻塞）
-- `QA_FORCE_OPENCLAW=true`（可选：文本消息直接走 OpenClaw，跳过意图匹配）
-- `QA_OPENCLAW_THEN_INTENT=true`（可选：先 OpenClaw，再意图匹配，命中意图则优先意图答案）
+- `QA_APPEND_INTENT_NOTE=true`（可选：命中意图时在回复末尾补一行识别说明）
+- `QA_APPEND_INTENT_NOTE_ON_UNMATCH=false`（可选：未命中时是否也补说明）
 - `QA_ENABLE_IMAGE_UNDERSTANDING=true`
 - `QA_IMAGE_MAX_BYTES=5000000`
 - 需要本机 OpenClaw gateway 可用（`openclaw health` 可检查）

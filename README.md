@@ -7,6 +7,7 @@
 - 基于 `intents.json` 的动态意图分类（支持热重载）
 - 意图库条目校验（去重、字段归一化、可启停、优先级与排除词）
 - 自动群聊问答（配置群内消息都会处理，不再静默未命中）
+- 保持原始问答主流程（意图优先），并在会话内补充意图识别说明（可开关）
 - 所有问题入库（命中与未命中都会写入 bitable）
 - 未命中兜底 AI 搜索（默认走 OpenClaw 搜索）
 - 图片消息直连 OpenClaw 多模态识别（识别后直接自然语言回复）
@@ -169,8 +170,8 @@ QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20
 QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000
 QA_OPENCLAW_COOLDOWN_SECONDS=120
-QA_FORCE_OPENCLAW=false
-QA_OPENCLAW_THEN_INTENT=true
+QA_APPEND_INTENT_NOTE=true
+QA_APPEND_INTENT_NOTE_ON_UNMATCH=false
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 ```
@@ -183,13 +184,10 @@ QA_IMAGE_MAX_BYTES=5000000
 - 回复内容直接使用自然语言，不附加技术模板。
 - 图片体积默认限制 5MB（`QA_IMAGE_MAX_BYTES`）。
 
-直连 OpenClaw 说明：
-- 当 `QA_FORCE_OPENCLAW=true` 时，文本消息将跳过本地意图匹配，直接走 OpenClaw。
-- 适用于你说的“消息 -> OpenClaw”模式。
-
-OpenClaw -> 意图匹配说明：
-- 当 `QA_OPENCLAW_THEN_INTENT=true` 时，文本消息先调用 OpenClaw，再进行本地意图匹配。
-- 若本地意图命中，优先使用本地意图答案；未命中则回退 OpenClaw 结果。
+会话内意图补充说明：
+- 默认沿用原始流程：先本地意图，未命中再 AI 搜索兜底。
+- `QA_APPEND_INTENT_NOTE=true`：命中意图时在回复末尾补充一行识别说明。
+- `QA_APPEND_INTENT_NOTE_ON_UNMATCH=false`：未命中时默认不加提示，降低噪音。
 
 如需改为 Tavily：
 

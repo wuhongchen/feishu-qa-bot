@@ -14,6 +14,7 @@ if str(BASE_DIR) not in sys.path:
 
 from env_bootstrap import load_project_env  # noqa: E402
 from intent_classifier_v5 import (  # noqa: E402
+    IntentResult,
     classify_intent,
     get_all_intents,
     get_answer,
@@ -50,13 +51,18 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
 MAX_ROUNDS = max(0, int(os.getenv("QA_MAX_ROUNDS", "0")))
 SESSION_TTL_MINUTES = max(5, int(os.getenv("QA_SESSION_TTL_MINUTES", "30")))
 ENABLE_NPS = _parse_bool(os.getenv("QA_ENABLE_NPS"), True)
-FORCE_OPENCLAW = _parse_bool(os.getenv("QA_FORCE_OPENCLAW"), False)
-OPENCLAW_THEN_INTENT = _parse_bool(os.getenv("QA_OPENCLAW_THEN_INTENT"), True)
+APPEND_INTENT_NOTE = _parse_bool(os.getenv("QA_APPEND_INTENT_NOTE"), True)
+APPEND_INTENT_NOTE_ON_UNMATCH = _parse_bool(os.getenv("QA_APPEND_INTENT_NOTE_ON_UNMATCH"), False)
 NPS_EXCLUDE_INTENTS = {"thanks", "bot_status"}
 NPS_EXCLUDE_INTENTS.update({"ai_search_fallback", "ai_search_no_result", "ai_search_blocked", "ai_search_unavailable"})
 
 # Backward-compat symbol.
 QA_RULES = get_all_intents()
+_INTENT_NAME_MAP = {
+    str(item.get("id", "")).strip(): str(item.get("name", "")).strip()
+    for item in QA_RULES
+    if str(item.get("id", "")).strip()
+}
 
 _sessions: Dict[str, dict] = {}
 
@@ -107,8 +113,8 @@ def _get_or_create_session(chat_id: str, user_id: str) -> Tuple[dict, bool]:
     return session, True
 
 
-def match_question(question: str) -> Optional[dict]:
-    result = classify_intent(question)
+def match_question(question: str, intent_result: Optional[IntentResult] = None) -> Optional[dict]:
+    result = intent_result or classify_intent(question)
     answer_data = get_answer(result)
     if answer_data is None:
         return None
@@ -122,9 +128,12 @@ def match_question(question: str) -> Optional[dict]:
     }
 
 
-def match_question_with_fallback(question: str) -> Optional[dict]:
+def match_question_with_fallback(
+    question: str,
+    intent_result: Optional[IntentResult] = None,
+) -> Optional[dict]:
     """Try local intent first, then optional scoped AI search fallback."""
-    local_rule = match_question(question)
+    local_rule = match_question(question, intent_result=intent_result)
     if local_rule:
         return local_rule
     return build_ai_search_rule(question)
@@ -173,6 +182,29 @@ def generate_reply(
         )
 
     return reply
+
+
+def _get_intent_name(intent_id: str) -> str:
+    intent_id = str(intent_id or "").strip()
+    if not intent_id:
+        return ""
+    return _INTENT_NAME_MAP.get(intent_id) or intent_id
+
+
+def build_intent_note(intent_result: Optional[IntentResult]) -> str:
+    """Append a concise intent hint without changing the main QA flow."""
+    if not APPEND_INTENT_NOTE:
+        return ""
+
+    if not intent_result:
+        if APPEND_INTENT_NOTE_ON_UNMATCH:
+            return "补充：这条消息暂未命中明确意图，已按常规问答流程处理。"
+        return ""
+
+    intent_name = _get_intent_name(intent_result.intent_id)
+    if intent_name:
+        return f"补充：我理解你的问题更接近「{intent_name}」。"
+    return ""
 
 
 def build_record_fields(
@@ -256,47 +288,21 @@ def process_group_message(
     if nps_reply:
         return nps_reply, nps_record
 
-    if FORCE_OPENCLAW:
-        # Route all text messages directly to OpenClaw fallback/search.
-        rule = build_ai_search_rule(message)
-        if not rule:
-            rule = _build_openclaw_empty_rule()
-    elif OPENCLAW_THEN_INTENT:
-        # OpenClaw first, then prefer local intent if matched.
-        openclaw_rule = build_ai_search_rule(message)
-        local_rule = match_question(message)
-        if local_rule:
-            rule = local_rule
-        else:
-            try:
-                record_unmatched_question(
-                    question=message,
-                    chat_id=chat_id,
-                    sender_id=sender_id,
-                )
-            except Exception:
-                pass
-            rule = openclaw_rule or _build_openclaw_empty_rule()
+    # Simplified stable flow: local intent first, fallback second.
+    intent_result = classify_intent(message)
+    local_rule = match_question(message, intent_result=intent_result)
+    if local_rule:
+        rule = local_rule
     else:
-        # 1) Local intent first.
-        local_rule = match_question(message)
-        if local_rule:
-            rule = local_rule
-        else:
-            # 2) Record unmatched question for intent-library evolution.
-            try:
-                record_unmatched_question(
-                    question=message,
-                    chat_id=chat_id,
-                    sender_id=sender_id,
-                )
-            except Exception:
-                pass
-            # 3) Try scoped AI search fallback.
-            rule = build_ai_search_rule(message)
-            # 4) Keep a concise fallback when search service itself returns nothing.
-            if not rule:
-                rule = _build_openclaw_empty_rule()
+        try:
+            record_unmatched_question(
+                question=message,
+                chat_id=chat_id,
+                sender_id=sender_id,
+            )
+        except Exception:
+            pass
+        rule = build_ai_search_rule(message) or _build_openclaw_empty_rule()
 
     session["rounds"] += 1
 
@@ -322,6 +328,9 @@ def process_group_message(
         is_new_session=is_new_session,
         add_nps_prompt=add_nps_prompt,
     )
+    intent_note = build_intent_note(intent_result)
+    if intent_note:
+        reply = f"{reply}\n\n{intent_note}"
     session["answers"].append(rule["answer"])
 
     record_fields = build_record_fields(
@@ -359,7 +368,13 @@ def process_group_mention(
 def reload_intent_library() -> None:
     reload_intents()
     global QA_RULES
+    global _INTENT_NAME_MAP
     QA_RULES = get_all_intents()
+    _INTENT_NAME_MAP = {
+        str(item.get("id", "")).strip(): str(item.get("name", "")).strip()
+        for item in QA_RULES
+        if str(item.get("id", "")).strip()
+    }
     print("[Handler] Intent library reloaded")
 
 
