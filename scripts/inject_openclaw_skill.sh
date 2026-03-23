@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SKILL_NAME="feishu-qa-bot-skill"
 MODE="${1:-link}" # link | copy
+export PATH="${HOME}/.local/bin:${HOME}/.openclaw/bin:${PATH}"
 
 extract_json() {
   python3 -c '
@@ -25,7 +26,7 @@ except Exception:
 '
 }
 
-OC_RAW="$(openclaw skills list --json 2>/dev/null || true)"
+OC_RAW="$(openclaw skills list --json 2>&1 || true)"
 OC_JSON="$(printf '%s' "${OC_RAW}" | extract_json)"
 MANAGED_DIR="$(printf '%s' "${OC_JSON}" | python3 -c 'import json,sys
 try:
@@ -49,7 +50,7 @@ else
   ln -sfn "${SKILL_DIR}" "${TARGET}"
 fi
 
-CHECK_RAW="$(openclaw skills list --json 2>/dev/null || true)"
+CHECK_RAW="$(openclaw skills list --json 2>&1 || true)"
 CHECK_JSON="$(printf '%s' "${CHECK_RAW}" | extract_json)"
 FOUND="$(printf '%s' "${CHECK_JSON}" | python3 -c 'import json,sys
 name="feishu-qa-bot-skill"

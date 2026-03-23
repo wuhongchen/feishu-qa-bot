@@ -83,6 +83,7 @@ if (( TOTAL_PROCESSED > 0 )); then
   exit 0
 fi
 
-if [[ "${QUIET_IDLE,,}" =~ ^(1|true|yes|y|on)$ ]]; then
+QUIET_IDLE_NORM="$(printf '%s' "${QUIET_IDLE}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${QUIET_IDLE_NORM}" =~ ^(1|true|yes|y|on)$ ]]; then
   echo "${BROADCAST_TEXT:-本轮无新消息。}"
 fi

@@ -123,7 +123,7 @@ python3 scripts/sync_intents_to_bitable.py
 
 ## 8. 配置未命中 AI 搜索兜底（可选）
 
-系统默认在“意图未命中”时直接走 OpenClaw `Gateway Agent Call`。  
+系统默认在“意图未命中”时走 OpenClaw 会话子代理链路（`sessions.create/sessions.send`）。  
 如果你希望未命中时给出带来源的检索答复，可以开启受控 AI 搜索兜底：
 
 - `QA_ENABLE_AI_FALLBACK=true`
@@ -134,7 +134,7 @@ python3 scripts/sync_intents_to_bitable.py
 - `QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20`（防止 openclaw 子进程长时间卡住）
 - `QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000`（gateway call 超时，毫秒）
 - `QA_OPENCLAW_COOLDOWN_SECONDS=120`（超时后熔断冷却秒数，避免反复阻塞）
-- `QA_OPENCLAW_TEXT_CALL_MODE=auto`（文本兜底调用策略：`auto|agent_cli|gateway`）
+- `QA_OPENCLAW_PARENT_SESSION_KEY=agent:main:main`（可选：指定子会话父会话）
 - `QA_APPEND_INTENT_NOTE=true`（可选：命中意图时在回复末尾补一行识别说明）
 - `QA_APPEND_INTENT_NOTE_ON_UNMATCH=false`（可选：未命中时是否也补说明）
 - `QA_ENABLE_IMAGE_UNDERSTANDING=true`
@@ -158,15 +158,8 @@ python3 scripts/sync_intents_to_bitable.py
 
 图片消息补充：
 
-- 群消息为图片（`msg_type=image`）时，会通过 `gateway call agent` 识别并回复。
+- 群消息为图片（`msg_type=image`）时，会通过 `sessions.send + attachments` 识别并回复。
 - 默认仅处理 5MB 以内图片（可通过 `QA_IMAGE_MAX_BYTES` 调整）。
-
-文本兜底调用补充：
-
-- 默认策略：`QA_OPENCLAW_TEXT_CALL_MODE=auto`
-- `auto`：优先 `openclaw agent`，失败后自动回退 `openclaw gateway call agent`
-- `agent_cli`：只用 `openclaw agent`
-- `gateway`：只用 `openclaw gateway call agent`
 
 ## 常见问题
 

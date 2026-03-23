@@ -1,2 +1,4 @@
 requests>=2.31.0
+# macOS system Python (LibreSSL) compatibility: urllib3 v2 warns on LibreSSL.
+urllib3<2
 python-dotenv>=1.0.1

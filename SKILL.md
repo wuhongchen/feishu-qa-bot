@@ -67,7 +67,7 @@ permissions:
     - QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS
     - QA_OPENCLAW_GATEWAY_TIMEOUT_MS
     - QA_OPENCLAW_COOLDOWN_SECONDS
-    - QA_OPENCLAW_TEXT_CALL_MODE
+    - QA_OPENCLAW_PARENT_SESSION_KEY
     - QA_ENABLE_IMAGE_UNDERSTANDING
     - QA_IMAGE_MAX_BYTES
     - QA_TAVILY_API_KEY
@@ -196,7 +196,7 @@ minOpenClawVersion: 0.1.0
 - `QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20`
 - `QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000`
 - `QA_OPENCLAW_COOLDOWN_SECONDS=120`
-- `QA_OPENCLAW_TEXT_CALL_MODE=auto`（`auto|agent_cli|gateway`）
+- `QA_OPENCLAW_PARENT_SESSION_KEY=agent:main:main`（可选，子会话父会话）
 - `QA_ENABLE_IMAGE_UNDERSTANDING=true|false`
 - `QA_IMAGE_MAX_BYTES=5000000`
 - `QA_TAVILY_API_KEY=tvly-...`
@@ -329,8 +329,8 @@ openclaw cron list --all --json
 
 ### 9.3 Gateway 接入方式
 
-- 文本兜底：默认 `openclaw agent`，失败自动回退 `openclaw gateway call agent`（由 `ai_search_fallback.py` 统一调用）。
-- 图片识别：`openclaw gateway call agent` + `attachments`（由 `group_qa_poller_v3.py` 调用）。
+- 文本兜底：`sessions.create` → `sessions.send` → `agent.wait` → `sessions.preview`（由 `ai_search_fallback.py` 统一调用）。
+- 图片识别：同一链路，通过 `sessions.send + attachments` 进入多模态识别。
 - 定向群开放：通过 `QA_OPENCLAW_GATEWAY_CHAT_IDS` 控制，仅在指定群启用 Gateway 文本/图片能力。
 
 ### 9.4 验证命令

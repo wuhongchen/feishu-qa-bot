@@ -171,14 +171,14 @@ QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20
 QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000
 QA_OPENCLAW_COOLDOWN_SECONDS=120
-QA_OPENCLAW_TEXT_CALL_MODE=auto
+QA_OPENCLAW_PARENT_SESSION_KEY=agent:main:main
 QA_APPEND_INTENT_NOTE=true
 QA_APPEND_INTENT_NOTE_ON_UNMATCH=false
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 ```
 
-说明：`openclaw` provider 的文本默认走 `openclaw agent`（`QA_OPENCLAW_TEXT_CALL_MODE=auto`，失败自动回退 `gateway call agent`）；图片走 `gateway call agent + attachments`。依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
+说明：`openclaw` provider 文本与图片统一走会话子代理链路：`sessions.create` → `sessions.send`（可带 `attachments`）→ `agent.wait` → `sessions.preview`。默认使用 `QA_OPENCLAW_PARENT_SESSION_KEY=agent:main:main` 作为父会话；若父会话不存在会自动降级为无父会话创建。
 默认不附加技术尾注（来源/置信度），可通过 `QA_AI_REPLY_APPEND_META=true` 打开。
 
 图片消息说明：

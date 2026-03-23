@@ -277,112 +277,24 @@ def _search_with_openclaw_agent(
     return answer, items, ""
 
 
-def _resolve_openclaw_text_call_mode() -> str:
-    """Text-call strategy for OpenClaw: agent_cli | gateway | auto."""
-    mode = os.getenv("QA_OPENCLAW_TEXT_CALL_MODE", "auto").strip().lower()
-    if mode in {"agent_cli", "gateway", "auto"}:
-        return mode
-    return "auto"
-
-
-def _call_openclaw_agent_cli(
-    message: str,
-    timeout_seconds: int,
-) -> Tuple[str, str]:
-    """Call OpenClaw agent CLI directly (more stable for text-only fallback)."""
-    cooldown_left = _openclaw_cooldown_remaining_seconds()
-    if cooldown_left > 0:
-        return "", f"openclaw_cooldown_active: {cooldown_left}s"
-
-    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
-    cmd = [
-        "openclaw",
-        "agent",
-        "--agent",
-        agent_id,
-        "--message",
-        str(message or "").strip(),
-        "--json",
-        "--timeout",
-        str(max(30, timeout_seconds)),
-    ]
-
-    process_timeout = _openclaw_process_timeout_seconds(default_seconds=max(12, timeout_seconds + 6))
-    try:
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=process_timeout,
-        )
-    except subprocess.TimeoutExpired:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_agent_cli_timeout: {process_timeout}s"
-    except Exception as exc:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_agent_cli_exec_failed: {exc}"
-
-    combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
-    if completed.returncode != 0:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_agent_cli_non_zero_exit: {combined[:240]}"
-
-    payload = _extract_first_json_block(combined)
-    if not isinstance(payload, dict):
-        text = combined.strip()
-        if _looks_like_openclaw_error_text(text):
-            _trip_openclaw_cooldown()
-            return "", f"openclaw_agent_cli_text_error: {text[:240]}"
-        _clear_openclaw_cooldown()
-        return text, ""
-
-    text = _extract_openclaw_plain_text(payload, combined)
-    if _looks_like_openclaw_error_text(text):
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_agent_cli_answer_error: {text[:240]}"
-    _clear_openclaw_cooldown()
-    return text, ""
-
-
-def _call_openclaw_agent_gateway(
-    message: str,
-    attachments: Optional[List[Dict[str, str]]],
-    timeout_seconds: int,
-) -> Tuple[str, str]:
-    """Call OpenClaw gateway agent API with optional image attachments."""
-    cooldown_left = _openclaw_cooldown_remaining_seconds()
-    if cooldown_left > 0:
-        return "", f"openclaw_cooldown_active: {cooldown_left}s"
-
-    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
-    params: Dict[str, object] = {
-        "message": str(message or "").strip(),
-        "agentId": agent_id,
-        "timeout": max(30, timeout_seconds),
-        "idempotencyKey": f"qa-gateway-{uuid4().hex}",
-    }
-    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
-    if model:
-        params["model"] = model
-    if attachments:
-        params["attachments"] = attachments
-
-    gateway_timeout_ms = max(3000, int(os.getenv("QA_OPENCLAW_GATEWAY_TIMEOUT_MS", "12000")))
+def _call_openclaw_gateway_method(
+    method: str,
+    params: Dict[str, object],
+    timeout_ms: int,
+) -> Tuple[Optional[Dict[str, object]], str]:
+    gateway_timeout_ms = max(3000, int(timeout_ms))
     cmd = [
         "openclaw",
         "gateway",
         "call",
-        "agent",
-        "--expect-final",
+        method,
         "--json",
         "--timeout",
         str(gateway_timeout_ms),
         "--params",
         json.dumps(params, ensure_ascii=False),
     ]
-
-    process_timeout = _openclaw_process_timeout_seconds(default_seconds=max(12, gateway_timeout_ms // 1000 + 4))
+    process_timeout = _openclaw_process_timeout_seconds(default_seconds=max(12, gateway_timeout_ms // 1000 + 6))
     try:
         completed = subprocess.run(
             cmd,
@@ -392,32 +304,39 @@ def _call_openclaw_agent_gateway(
             timeout=process_timeout,
         )
     except subprocess.TimeoutExpired:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_gateway_timeout: {process_timeout}s"
+        return None, f"openclaw_gateway_timeout({method}): {process_timeout}s"
     except Exception as exc:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_gateway_exec_failed: {exc}"
+        return None, f"openclaw_gateway_exec_failed({method}): {exc}"
 
     combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
     if completed.returncode != 0:
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_gateway_non_zero_exit: {combined[:240]}"
+        return None, f"openclaw_gateway_non_zero_exit({method}): {combined[:240]}"
 
     payload = _extract_first_json_block(combined)
     if not isinstance(payload, dict):
-        text = combined.strip()
-        if _looks_like_openclaw_error_text(text):
-            _trip_openclaw_cooldown()
-            return "", f"openclaw_gateway_text_error: {text[:240]}"
-        _clear_openclaw_cooldown()
-        return text, ""
+        return None, f"openclaw_gateway_invalid_json({method}): {combined[:240]}"
+    return payload, ""
 
-    text = _extract_openclaw_plain_text(payload, combined)
-    if _looks_like_openclaw_error_text(text):
-        _trip_openclaw_cooldown()
-        return "", f"openclaw_gateway_answer_error: {text[:240]}"
-    _clear_openclaw_cooldown()
-    return text, ""
+
+def _extract_assistant_text_from_preview(payload: Dict[str, object]) -> str:
+    previews = payload.get("previews")
+    if not isinstance(previews, list):
+        return ""
+    for preview in previews:
+        if not isinstance(preview, dict):
+            continue
+        items = preview.get("items")
+        if not isinstance(items, list):
+            continue
+        for row in reversed(items):
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("role", "")).strip() != "assistant":
+                continue
+            text = str(row.get("text", "")).strip()
+            if text:
+                return text
+    return ""
 
 
 def _call_openclaw_agent_with_attachments(
@@ -425,36 +344,94 @@ def _call_openclaw_agent_with_attachments(
     attachments: Optional[List[Dict[str, str]]],
     timeout_seconds: int,
 ) -> Tuple[str, str]:
-    """Unified OpenClaw caller:
-    - image/multimodal: gateway call (supports attachments)
-    - text fallback: prefer agent CLI, fallback to gateway in auto mode
-    """
-    has_attachments = bool(attachments)
-    if has_attachments:
-        return _call_openclaw_agent_gateway(
-            message=message,
-            attachments=attachments,
-            timeout_seconds=timeout_seconds,
-        )
+    """Use OpenClaw spawned child session flow (sessions.create/sessions.send/agent.wait)."""
+    cooldown_left = _openclaw_cooldown_remaining_seconds()
+    if cooldown_left > 0:
+        return "", f"openclaw_cooldown_active: {cooldown_left}s"
 
-    mode = _resolve_openclaw_text_call_mode()
-    if mode == "gateway":
-        return _call_openclaw_agent_gateway(
-            message=message,
-            attachments=None,
-            timeout_seconds=timeout_seconds,
-        )
-    if mode == "agent_cli":
-        return _call_openclaw_agent_cli(message=message, timeout_seconds=timeout_seconds)
+    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
+    parent_session_key = os.getenv("QA_OPENCLAW_PARENT_SESSION_KEY", f"agent:{agent_id}:main").strip()
+    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
+    base_timeout_ms = max(6000, int(os.getenv("QA_OPENCLAW_GATEWAY_TIMEOUT_MS", "12000")))
+    wait_timeout_ms = max(30000, int(timeout_seconds) * 1000)
 
-    text, err = _call_openclaw_agent_cli(message=message, timeout_seconds=timeout_seconds)
-    if text.strip() and not err:
-        return text, ""
-    return _call_openclaw_agent_gateway(
-        message=message,
-        attachments=None,
-        timeout_seconds=timeout_seconds,
+    create_params: Dict[str, object] = {
+        "agentId": agent_id,
+        "label": f"qa-spawn-{uuid4().hex[:8]}",
+    }
+    if parent_session_key:
+        create_params["parentSessionKey"] = parent_session_key
+    if model:
+        create_params["model"] = model
+
+    # Text-only path can start directly on create; multimodal path sends with attachments after create.
+    if not attachments:
+        create_params["message"] = str(message or "").strip()
+
+    created, err = _call_openclaw_gateway_method("sessions.create", create_params, timeout_ms=base_timeout_ms)
+    if err and parent_session_key and "unknown parent session" in err.lower():
+        create_params.pop("parentSessionKey", None)
+        created, err = _call_openclaw_gateway_method("sessions.create", create_params, timeout_ms=base_timeout_ms)
+    if err or not isinstance(created, dict):
+        _trip_openclaw_cooldown()
+        return "", err or "openclaw_sessions_create_failed"
+
+    session_key = str(created.get("key", "")).strip()
+    if not session_key:
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_sessions_create_no_key: {str(created)[:240]}"
+
+    run_id = str(created.get("runId", "")).strip() if created.get("runStarted") else ""
+    if attachments:
+        send_params: Dict[str, object] = {
+            "key": session_key,
+            "message": str(message or "").strip(),
+            "attachments": attachments,
+            "timeoutMs": wait_timeout_ms,
+            "idempotencyKey": f"qa-spawn-send-{uuid4().hex}",
+        }
+        sent, send_err = _call_openclaw_gateway_method("sessions.send", send_params, timeout_ms=base_timeout_ms)
+        if send_err or not isinstance(sent, dict):
+            _trip_openclaw_cooldown()
+            return "", send_err or "openclaw_sessions_send_failed"
+        run_id = str(sent.get("runId", "")).strip()
+
+    if run_id:
+        waited, wait_err = _call_openclaw_gateway_method(
+            "agent.wait",
+            {"runId": run_id, "timeoutMs": wait_timeout_ms},
+            timeout_ms=wait_timeout_ms + 5000,
+        )
+        if wait_err:
+            _trip_openclaw_cooldown()
+            return "", wait_err
+        if isinstance(waited, dict):
+            status = str(waited.get("status", "")).strip().lower()
+            if status in {"timeout", "error"}:
+                _trip_openclaw_cooldown()
+                return "", f"openclaw_spawn_wait_{status}: {str(waited)[:240]}"
+
+    preview_payload, preview_err = _call_openclaw_gateway_method(
+        "sessions.preview",
+        {"keys": [session_key], "limit": 20, "maxChars": 8000},
+        timeout_ms=base_timeout_ms,
     )
+    if preview_err or not isinstance(preview_payload, dict):
+        _trip_openclaw_cooldown()
+        return "", preview_err or "openclaw_sessions_preview_failed"
+
+    text = _extract_assistant_text_from_preview(preview_payload).strip()
+    if not text:
+        text = _extract_openclaw_plain_text(preview_payload, "").strip()
+    if not text:
+        _trip_openclaw_cooldown()
+        return "", "openclaw_spawn_empty_output"
+    if _looks_like_openclaw_error_text(text):
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_spawn_answer_error: {text[:240]}"
+
+    _clear_openclaw_cooldown()
+    return text, ""
 
 
 def _looks_like_openclaw_error_text(text: str) -> bool:

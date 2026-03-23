@@ -23,10 +23,14 @@ Core implementation: `ai_search_fallback.py`
 
 - If provider misconfigured, returns config warning instead of hallucinated answer.
 - If OpenClaw execution fails, returns a Chinese availability notice instead of raw technical error.
-- Text fallback defaults to `openclaw agent` and auto-falls back to `openclaw gateway call agent` when needed (`QA_OPENCLAW_TEXT_CALL_MODE=auto`).
+- OpenClaw fallback uses spawned child-session flow:
+  - `sessions.create` (create child session, optional parent)
+  - `sessions.send` (send user message, optional attachments)
+  - `agent.wait` (wait run completion)
+  - `sessions.preview` (read assistant answer)
 
 ## Image understanding path
 
 - `group_qa_poller_v3.py` routes `msg_type=image` directly to OpenClaw multimodal capability.
-- Image is downloaded from Feishu resource API, converted to base64 attachment, then sent via `openclaw gateway call agent`.
+- Image is downloaded from Feishu resource API, converted to base64 attachment, then sent via `sessions.send + attachments`.
 - This path replies in natural language directly and does not append technical meta template.
