@@ -23,6 +23,7 @@ Core implementation: `ai_search_fallback.py`
 
 - If provider misconfigured, returns config warning instead of hallucinated answer.
 - If OpenClaw execution fails, returns a Chinese availability notice instead of raw technical error.
+- Text fallback defaults to `openclaw agent` and auto-falls back to `openclaw gateway call agent` when needed (`QA_OPENCLAW_TEXT_CALL_MODE=auto`).
 
 ## Image understanding path
 

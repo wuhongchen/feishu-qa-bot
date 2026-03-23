@@ -277,7 +277,75 @@ def _search_with_openclaw_agent(
     return answer, items, ""
 
 
-def _call_openclaw_agent_with_attachments(
+def _resolve_openclaw_text_call_mode() -> str:
+    """Text-call strategy for OpenClaw: agent_cli | gateway | auto."""
+    mode = os.getenv("QA_OPENCLAW_TEXT_CALL_MODE", "auto").strip().lower()
+    if mode in {"agent_cli", "gateway", "auto"}:
+        return mode
+    return "auto"
+
+
+def _call_openclaw_agent_cli(
+    message: str,
+    timeout_seconds: int,
+) -> Tuple[str, str]:
+    """Call OpenClaw agent CLI directly (more stable for text-only fallback)."""
+    cooldown_left = _openclaw_cooldown_remaining_seconds()
+    if cooldown_left > 0:
+        return "", f"openclaw_cooldown_active: {cooldown_left}s"
+
+    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
+    cmd = [
+        "openclaw",
+        "agent",
+        "--agent",
+        agent_id,
+        "--message",
+        str(message or "").strip(),
+        "--json",
+        "--timeout",
+        str(max(30, timeout_seconds)),
+    ]
+
+    process_timeout = _openclaw_process_timeout_seconds(default_seconds=max(12, timeout_seconds + 6))
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=process_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_agent_cli_timeout: {process_timeout}s"
+    except Exception as exc:
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_agent_cli_exec_failed: {exc}"
+
+    combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
+    if completed.returncode != 0:
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_agent_cli_non_zero_exit: {combined[:240]}"
+
+    payload = _extract_first_json_block(combined)
+    if not isinstance(payload, dict):
+        text = combined.strip()
+        if _looks_like_openclaw_error_text(text):
+            _trip_openclaw_cooldown()
+            return "", f"openclaw_agent_cli_text_error: {text[:240]}"
+        _clear_openclaw_cooldown()
+        return text, ""
+
+    text = _extract_openclaw_plain_text(payload, combined)
+    if _looks_like_openclaw_error_text(text):
+        _trip_openclaw_cooldown()
+        return "", f"openclaw_agent_cli_answer_error: {text[:240]}"
+    _clear_openclaw_cooldown()
+    return text, ""
+
+
+def _call_openclaw_agent_gateway(
     message: str,
     attachments: Optional[List[Dict[str, str]]],
     timeout_seconds: int,
@@ -341,6 +409,7 @@ def _call_openclaw_agent_with_attachments(
         if _looks_like_openclaw_error_text(text):
             _trip_openclaw_cooldown()
             return "", f"openclaw_gateway_text_error: {text[:240]}"
+        _clear_openclaw_cooldown()
         return text, ""
 
     text = _extract_openclaw_plain_text(payload, combined)
@@ -349,6 +418,43 @@ def _call_openclaw_agent_with_attachments(
         return "", f"openclaw_gateway_answer_error: {text[:240]}"
     _clear_openclaw_cooldown()
     return text, ""
+
+
+def _call_openclaw_agent_with_attachments(
+    message: str,
+    attachments: Optional[List[Dict[str, str]]],
+    timeout_seconds: int,
+) -> Tuple[str, str]:
+    """Unified OpenClaw caller:
+    - image/multimodal: gateway call (supports attachments)
+    - text fallback: prefer agent CLI, fallback to gateway in auto mode
+    """
+    has_attachments = bool(attachments)
+    if has_attachments:
+        return _call_openclaw_agent_gateway(
+            message=message,
+            attachments=attachments,
+            timeout_seconds=timeout_seconds,
+        )
+
+    mode = _resolve_openclaw_text_call_mode()
+    if mode == "gateway":
+        return _call_openclaw_agent_gateway(
+            message=message,
+            attachments=None,
+            timeout_seconds=timeout_seconds,
+        )
+    if mode == "agent_cli":
+        return _call_openclaw_agent_cli(message=message, timeout_seconds=timeout_seconds)
+
+    text, err = _call_openclaw_agent_cli(message=message, timeout_seconds=timeout_seconds)
+    if text.strip() and not err:
+        return text, ""
+    return _call_openclaw_agent_gateway(
+        message=message,
+        attachments=None,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _looks_like_openclaw_error_text(text: str) -> bool:
@@ -477,9 +583,9 @@ def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str,
         if err:
             return {
                 "answer": (
-                    "OpenClaw Gateway 当前不可用，请稍后重试或 @助教。"
+                    "OpenClaw 当前不可用，请稍后重试或 @助教。"
                 ),
-                "source": "OpenClaw Gateway/不可用",
+                "source": "OpenClaw/不可用",
                 "confidence": 0.2,
                 "intent": "ai_search_unavailable",
                 "links": [],
@@ -488,9 +594,9 @@ def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str,
         if not answer_text and not items:
             return {
                 "answer": (
-                    "已执行 OpenClaw Gateway 检索，但暂未检索到可用结果。请补充关键词后再试。"
+                    "已执行 OpenClaw 检索，但暂未检索到可用结果。请补充关键词后再试。"
                 ),
-                "source": "OpenClaw Gateway/无结果",
+                "source": "OpenClaw/无结果",
                 "confidence": 0.25,
                 "intent": "ai_search_no_result",
                 "links": [],
@@ -501,7 +607,7 @@ def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str,
         confidence = min(0.78, 0.48 + len(items) * 0.08)
         return {
             "answer": answer,
-            "source": "OpenClaw Gateway",
+            "source": "OpenClaw",
             "confidence": confidence,
             "intent": "ai_search_fallback",
             "links": links,

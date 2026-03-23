@@ -147,7 +147,7 @@ python3 scripts/sync_knowledge_base.py \
 
 ## 未命中 AI 搜索兜底（新增）
 
-默认启用（`QA_AI_SEARCH_PROVIDER=openclaw`），在本地意图未命中时直接走 OpenClaw `Gateway Agent Call`。
+默认启用（`QA_AI_SEARCH_PROVIDER=openclaw`），在本地意图未命中时走 OpenClaw 文本兜底链路。
 
 触发条件：
 
@@ -171,13 +171,14 @@ QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20
 QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000
 QA_OPENCLAW_COOLDOWN_SECONDS=120
+QA_OPENCLAW_TEXT_CALL_MODE=auto
 QA_APPEND_INTENT_NOTE=true
 QA_APPEND_INTENT_NOTE_ON_UNMATCH=false
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 ```
 
-说明：`openclaw` provider 的文本与图片都通过 `gateway call agent` 接入。依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
+说明：`openclaw` provider 的文本默认走 `openclaw agent`（`QA_OPENCLAW_TEXT_CALL_MODE=auto`，失败自动回退 `gateway call agent`）；图片走 `gateway call agent + attachments`。依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
 默认不附加技术尾注（来源/置信度），可通过 `QA_AI_REPLY_APPEND_META=true` 打开。
 
 图片消息说明：
