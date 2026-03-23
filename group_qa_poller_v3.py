@@ -386,7 +386,11 @@ def main() -> None:
                         if fetch_err:
                             errors.append(f"image fetch failed: {fetch_err}")
                     else:
-                        image_rule = build_ai_image_rule(question=text, attachments=[attachment])
+                        image_rule = build_ai_image_rule(
+                            question=text,
+                            attachments=[attachment],
+                            chat_id=chat_id,
+                        )
                         reply = str(image_rule.get("answer", "")).strip()
                         record_fields = build_image_record_fields(
                             chat_id=chat_id,

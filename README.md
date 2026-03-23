@@ -147,7 +147,7 @@ python3 scripts/sync_knowledge_base.py \
 
 ## 未命中 AI 搜索兜底（新增）
 
-默认启用（`QA_AI_SEARCH_PROVIDER=openclaw`），在本地意图未命中时直接走 OpenClaw 搜索。
+默认启用（`QA_AI_SEARCH_PROVIDER=openclaw`），在本地意图未命中时直接走 OpenClaw `Gateway Agent Call`。
 
 触发条件：
 
@@ -166,6 +166,7 @@ python3 scripts/sync_knowledge_base.py \
 QA_ENABLE_AI_FALLBACK=true
 QA_AI_SEARCH_PROVIDER=openclaw
 QA_OPENCLAW_SEARCH_AGENT=main
+QA_OPENCLAW_GATEWAY_CHAT_IDS=oc_xxx,oc_yyy
 QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20
 QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000
@@ -176,13 +177,17 @@ QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 ```
 
-说明：`openclaw` provider 依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
+说明：`openclaw` provider 的文本与图片都通过 `gateway call agent` 接入。依赖本机 OpenClaw gateway 和对应 agent 可用；不可用时会返回“搜索不可用/无结果”提示。
 默认不附加技术尾注（来源/置信度），可通过 `QA_AI_REPLY_APPEND_META=true` 打开。
 
 图片消息说明：
 - `msg_type=image` 会优先走 OpenClaw 图片识别链路，不经过本地意图匹配。
 - 回复内容直接使用自然语言，不附加技术模板。
 - 图片体积默认限制 5MB（`QA_IMAGE_MAX_BYTES`）。
+
+定向群开放说明：
+- `QA_OPENCLAW_GATEWAY_CHAT_IDS` 为空时：默认对 `QA_CHAT_ID` 内所有群开放 Gateway 能力。
+- 配置为逗号分隔 chat_id 时：仅这些群启用 Gateway 文本兜底与图片识别；其他群仅走本地意图。
 
 会话内意图补充说明：
 - 默认沿用原始流程：先本地意图，未命中再 AI 搜索兜底。

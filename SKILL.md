@@ -1,6 +1,6 @@
 ---
 name: feishu-qa-bot-skill
-version: 1.4.0
+version: 1.4.1
 description: 飞书群聊问答机器人，支持动态意图分类、受控 AI 搜索兜底、NPS 收集、多维表格记录和可调度的知识库同步。
 author: hongchen
 license: MIT
@@ -13,6 +13,8 @@ capabilities:
     description: 保持原始问答主流程不变，在会话回复中补充意图识别说明
   - id: ai-search-fallback
     description: 本地意图未命中时执行 AI 搜索兜底
+  - id: openclaw-gateway-integration
+    description: 通过 OpenClaw CLI + Gateway Agent Call 统一接入文本兜底与图片识别
   - id: collect-nps
     description: 首轮有效答复后触发 0-10 分评分并记录 NPS 状态
   - id: poll-feishu-groups
@@ -58,6 +60,15 @@ permissions:
     - QA_SYNC_INTENTS_TO_BITABLE
     - QA_ENABLE_AI_FALLBACK
     - QA_AI_SEARCH_PROVIDER
+    - QA_OPENCLAW_SEARCH_AGENT
+    - QA_OPENCLAW_SEARCH_MODEL
+    - QA_OPENCLAW_GATEWAY_CHAT_IDS
+    - QA_OPENCLAW_TIMEOUT_SECONDS
+    - QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS
+    - QA_OPENCLAW_GATEWAY_TIMEOUT_MS
+    - QA_OPENCLAW_COOLDOWN_SECONDS
+    - QA_ENABLE_IMAGE_UNDERSTANDING
+    - QA_IMAGE_MAX_BYTES
     - QA_TAVILY_API_KEY
     - QA_AI_SEARCH_MAX_RESULTS
     - QA_AI_SEARCH_TIMEOUT
@@ -178,6 +189,14 @@ minOpenClawVersion: 0.1.0
 - `QA_ENABLE_AI_FALLBACK=true|false`
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
+- `QA_OPENCLAW_SEARCH_MODEL=...`（可选，指定模型）
+- `QA_OPENCLAW_GATEWAY_CHAT_IDS=oc_xxx,oc_yyy`（可选，仅对指定群开放 Gateway）
+- `QA_OPENCLAW_TIMEOUT_SECONDS=90`
+- `QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20`
+- `QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000`
+- `QA_OPENCLAW_COOLDOWN_SECONDS=120`
+- `QA_ENABLE_IMAGE_UNDERSTANDING=true|false`
+- `QA_IMAGE_MAX_BYTES=5000000`
 - `QA_TAVILY_API_KEY=tvly-...`
 - `QA_AI_SEARCH_MAX_RESULTS=3`
 - `QA_AI_SEARCH_TIMEOUT=10`
@@ -283,7 +302,39 @@ bash scripts/register_openclaw_cron.sh
 ## 8. 失败处理约定
 
 - Token 获取失败：轮询退出并输出错误 JSON。
-- 意图未命中：不静默，直接走 OpenClaw 搜索；无结果时返回搜索状态提示，并沉淀到意图补充库。
+- 意图未命中：在已开通群走 OpenClaw Gateway；未开通群仅记录问题，等待意图补充。
 - AI 兜底无结果：给出“限定范围无可靠信息”提示并引导人工。
 - 多维表格配置缺失：允许回复，记录写入失败信息。
 - 超轮次：自动转人工并可 @ `ADMIN_USER_ID`。
+
+## 9. OpenClaw CLI 接入声明（推荐）
+
+本技能推荐通过 OpenClaw CLI 接入，不依赖系统 `crontab`。
+
+### 9.1 Skill 注入
+
+```bash
+bash scripts/inject_openclaw_skill.sh
+openclaw skills list --json | rg feishu-qa-bot-skill
+```
+
+### 9.2 Cron 注册
+
+```bash
+bash scripts/register_openclaw_cron.sh
+openclaw cron list --all --json
+```
+
+### 9.3 Gateway 接入方式
+
+- 文本兜底：`openclaw gateway call agent`（由 `ai_search_fallback.py` 统一调用）。
+- 图片识别：`openclaw gateway call agent` + `attachments`（由 `group_qa_poller_v3.py` 调用）。
+- 定向群开放：通过 `QA_OPENCLAW_GATEWAY_CHAT_IDS` 控制，仅在指定群启用 Gateway 文本/图片能力。
+
+### 9.4 验证命令
+
+```bash
+python3 -m py_compile *.py scripts/*.py
+python3 scripts/run_single_message.py --chat-id oc_xxx --sender-id ou_xxx --message "测试一下"
+openclaw health
+```

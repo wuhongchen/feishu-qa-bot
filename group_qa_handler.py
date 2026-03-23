@@ -131,27 +131,18 @@ def match_question(question: str, intent_result: Optional[IntentResult] = None) 
 def match_question_with_fallback(
     question: str,
     intent_result: Optional[IntentResult] = None,
+    chat_id: str = "",
 ) -> Optional[dict]:
     """Try local intent first, then optional scoped AI search fallback."""
     local_rule = match_question(question, intent_result=intent_result)
     if local_rule:
         return local_rule
-    return build_ai_search_rule(question)
+    return build_ai_search_rule(question, chat_id=chat_id)
 
 
 def generate_fallback() -> str:
     """Backward-compat fallback text."""
     return "我暂时没理解这个问题，可以换个说法，或补充更具体的关键词。"
-
-
-def _build_openclaw_empty_rule() -> dict:
-    return {
-        "answer": "已触发 OpenClaw，但当前未返回结果，请稍后重试或 @助教。",
-        "source": "OpenClaw搜索/空响应",
-        "confidence": 0.2,
-        "intent": "ai_search_unavailable",
-        "links": [],
-    }
 
 
 def generate_reply(
@@ -302,7 +293,22 @@ def process_group_message(
             )
         except Exception:
             pass
-        rule = build_ai_search_rule(message) or _build_openclaw_empty_rule()
+        rule = build_ai_search_rule(message, chat_id=chat_id)
+        if not rule:
+            session["questions"].append(message)
+            unmatched_answer = "未命中意图，且当前群未开启 AI 兜底，已记录到问题库待补充。"
+            record_fields = build_record_fields(
+                session,
+                question=message,
+                answer=unmatched_answer,
+                matched=False,
+                nps_requested=False,
+            )
+            record_fields["状态"] = "未命中"
+            record_fields["知识来源"] = "知识库/未命中"
+            record_fields["置信度"] = 0.0
+            record_fields["意图分类"] = "unmatched"
+            return None, record_fields
 
     session["rounds"] += 1
 

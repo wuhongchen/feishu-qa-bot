@@ -58,6 +58,14 @@ def _parse_csv(value: Optional[str], default_values: List[str]) -> List[str]:
     return [x.strip() for x in value.split(",") if x.strip()]
 
 
+def is_gateway_enabled_for_chat(chat_id: str) -> bool:
+    """Whether OpenClaw Gateway features are enabled for this chat."""
+    allowlist = _parse_csv(os.getenv("QA_OPENCLAW_GATEWAY_CHAT_IDS"), [])
+    if not allowlist:
+        return True
+    return str(chat_id or "").strip() in set(allowlist)
+
+
 def _clean_snippet(text: str, max_len: int = 120) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(cleaned) <= max_len:
@@ -218,83 +226,40 @@ def _search_with_openclaw_agent(
     max_results: int,
     timeout_seconds: int,
 ) -> Tuple[str, List[SearchItem], str]:
-    cooldown_left = _openclaw_cooldown_remaining_seconds()
-    if cooldown_left > 0:
-        return "", [], f"openclaw_cooldown_active: {cooldown_left}s"
-
-    agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
-    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
-
     prompt = (
-        "你是知识检索助手。请先检索再回答。\n"
-        "输出必须是严格 JSON，不要输出任何额外文本：\n"
+        "你是飞书群答疑助手。请结合可用检索能力回答。\n"
+        "若可提供来源，请输出严格 JSON：\n"
         "{\n"
-        '  "answer": "给用户的简洁回答（120字内）",\n'
-        '  "sources": [{"title":"标题","url":"https://...","snippet":"20-80字摘要"}]\n'
+        '  "answer":"给用户的简洁回答（120字内）",\n'
+        '  "sources":[{"title":"标题","url":"https://...","snippet":"20-80字摘要"}]\n'
         "}\n"
-        f"sources 最多 {max(1, min(6, max_results))} 条。\n"
+        f"sources 最多 {max(1, min(6, max_results))} 条；若无来源也请先给可执行回答。\n"
         f"用户问题：{question}"
     )
+    text, err = _call_openclaw_agent_with_attachments(
+        message=prompt,
+        attachments=None,
+        timeout_seconds=timeout_seconds,
+    )
+    if err:
+        return "", [], err
 
-    cmd = [
-        "openclaw",
-        "agent",
-        "--agent",
-        agent_id,
-        "--json",
-        "--timeout",
-        str(max(30, timeout_seconds)),
-        "--message",
-        prompt,
-    ]
-    if model:
-        cmd.extend(["--model", model])
-
-    process_timeout = _openclaw_process_timeout_seconds(default_seconds=20)
-    try:
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=process_timeout,
-        )
-    except subprocess.TimeoutExpired:
-        _trip_openclaw_cooldown()
-        return "", [], f"openclaw_exec_timeout: {process_timeout}s"
-    except Exception as exc:
-        _trip_openclaw_cooldown()
-        return "", [], f"openclaw_exec_failed: {exc}"
-
-    combined = "\n".join([completed.stdout or "", completed.stderr or ""]).strip()
-    if completed.returncode != 0:
-        _trip_openclaw_cooldown()
-        return "", [], f"openclaw_non_zero_exit: {combined[:240]}"
-
-    payload = _extract_first_json_block(combined)
-    content = ""
-    if isinstance(payload, dict):
-        # openclaw agent --json usually returns {payloads:[{text:...}],meta:{...}}
-        content = _extract_payload_text_from_openclaw_response(payload)
-        if not content:
-            # or the model response may already be plain JSON object in top-level text.
-            content = combined.strip()
-    else:
-        content = combined.strip()
+    content = str(text or "").strip()
+    if not content:
+        return "", [], "openclaw_gateway_empty_output"
 
     inner = _extract_first_json_block(content)
     if not isinstance(inner, dict):
-        # Allow plain text answers if model does not return strict JSON.
-        answer_text = content.strip()
-        if _looks_like_openclaw_error_text(answer_text):
-            return "", [], f"openclaw_text_error: {answer_text[:240]}"
-        if answer_text:
-            return answer_text, [], ""
-        return "", [], "openclaw_output_not_json"
+        if _looks_like_openclaw_error_text(content):
+            return "", [], f"openclaw_gateway_text_error: {content[:240]}"
+        return content, [], ""
 
     answer = str(inner.get("answer", "")).strip()
+    if not answer:
+        answer = content
     if _looks_like_openclaw_error_text(answer):
-        return "", [], f"openclaw_answer_error: {answer[:240]}"
+        return "", [], f"openclaw_gateway_answer_error: {answer[:240]}"
+
     sources_raw = inner.get("sources", [])
     items: List[SearchItem] = []
     if isinstance(sources_raw, list):
@@ -309,8 +274,6 @@ def _search_with_openclaw_agent(
             items.append(SearchItem(title=title, url=url, snippet=snippet))
             if len(items) >= max(1, min(8, max_results)):
                 break
-
-    _clear_openclaw_cooldown()
     return answer, items, ""
 
 
@@ -329,8 +292,11 @@ def _call_openclaw_agent_with_attachments(
         "message": str(message or "").strip(),
         "agentId": agent_id,
         "timeout": max(30, timeout_seconds),
-        "idempotencyKey": f"qa-img-{uuid4().hex}",
+        "idempotencyKey": f"qa-gateway-{uuid4().hex}",
     }
+    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
+    if model:
+        params["model"] = model
     if attachments:
         params["attachments"] = attachments
 
@@ -409,8 +375,21 @@ def _build_scoped_answer(items: List[SearchItem]) -> str:
     return "\n".join(lines)
 
 
-def build_ai_image_rule(question: str, attachments: Optional[List[Dict[str, str]]]) -> Dict[str, object]:
+def build_ai_image_rule(
+    question: str,
+    attachments: Optional[List[Dict[str, str]]],
+    chat_id: str = "",
+) -> Dict[str, object]:
     """Directly ask OpenClaw to understand image attachments and reply in Chinese."""
+    if not is_gateway_enabled_for_chat(chat_id):
+        return {
+            "answer": "当前群暂未开通图片识别能力，请补充文字描述我先帮你处理。",
+            "source": "OpenClaw图片识别/未开通",
+            "confidence": 0.2,
+            "intent": "ai_image_disabled",
+            "links": [],
+        }
+
     timeout_seconds = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
     user_question = str(question or "").strip()
     prompt = (
@@ -438,14 +417,14 @@ def build_ai_image_rule(question: str, attachments: Optional[List[Dict[str, str]
 
     return {
         "answer": answer.strip(),
-        "source": "OpenClaw图片识别",
+        "source": "OpenClaw Gateway图片识别",
         "confidence": 0.65,
         "intent": "ai_image_fallback",
         "links": [],
     }
 
 
-def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
+def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str, object]]:
     """Return a pseudo-intent rule for unmatched question, or None."""
     provider = os.getenv("QA_AI_SEARCH_PROVIDER", "openclaw").strip().lower()
     # OpenClaw provider is the default unmatched path. Do not silently skip.
@@ -488,6 +467,8 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
     openclaw_timeout = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
 
     if provider == "openclaw":
+        if not is_gateway_enabled_for_chat(chat_id):
+            return None
         answer_text, items, err = _search_with_openclaw_agent(
             question=question,
             max_results=max_results,
@@ -496,9 +477,9 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         if err:
             return {
                 "answer": (
-                    "OpenClaw 搜索当前不可用，请稍后重试或 @助教。"
+                    "OpenClaw Gateway 当前不可用，请稍后重试或 @助教。"
                 ),
-                "source": "OpenClaw搜索/不可用",
+                "source": "OpenClaw Gateway/不可用",
                 "confidence": 0.2,
                 "intent": "ai_search_unavailable",
                 "links": [],
@@ -507,9 +488,9 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         if not answer_text and not items:
             return {
                 "answer": (
-                    "已执行 OpenClaw 搜索，但暂未检索到可用结果。请补充关键词后再试。"
+                    "已执行 OpenClaw Gateway 检索，但暂未检索到可用结果。请补充关键词后再试。"
                 ),
-                "source": "OpenClaw搜索/无结果",
+                "source": "OpenClaw Gateway/无结果",
                 "confidence": 0.25,
                 "intent": "ai_search_no_result",
                 "links": [],
@@ -520,7 +501,7 @@ def build_ai_search_rule(question: str) -> Optional[Dict[str, object]]:
         confidence = min(0.78, 0.48 + len(items) * 0.08)
         return {
             "answer": answer,
-            "source": "OpenClaw搜索",
+            "source": "OpenClaw Gateway",
             "confidence": confidence,
             "intent": "ai_search_fallback",
             "links": links,

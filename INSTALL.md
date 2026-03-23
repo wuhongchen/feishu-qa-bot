@@ -123,12 +123,13 @@ python3 scripts/sync_intents_to_bitable.py
 
 ## 8. 配置未命中 AI 搜索兜底（可选）
 
-系统默认在“意图未命中”时直接走 OpenClaw 搜索。  
+系统默认在“意图未命中”时直接走 OpenClaw `Gateway Agent Call`。  
 如果你希望未命中时给出带来源的检索答复，可以开启受控 AI 搜索兜底：
 
 - `QA_ENABLE_AI_FALLBACK=true`
 - `QA_AI_SEARCH_PROVIDER=openclaw`
 - `QA_OPENCLAW_SEARCH_AGENT=main`
+- `QA_OPENCLAW_GATEWAY_CHAT_IDS=oc_xxx,oc_yyy`（可选：仅这些群启用 Gateway 能力）
 - `QA_OPENCLAW_TIMEOUT_SECONDS=90`
 - `QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20`（防止 openclaw 子进程长时间卡住）
 - `QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000`（gateway call 超时，毫秒）
@@ -156,7 +157,7 @@ python3 scripts/sync_intents_to_bitable.py
 
 图片消息补充：
 
-- 群消息为图片（`msg_type=image`）时，会直接调用 OpenClaw 模型识别并回复。
+- 群消息为图片（`msg_type=image`）时，会通过 `gateway call agent` 识别并回复。
 - 默认仅处理 5MB 以内图片（可通过 `QA_IMAGE_MAX_BYTES` 调整）。
 
 ## 常见问题
