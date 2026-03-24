@@ -5,8 +5,10 @@ import os
 import re
 import json
 import time
+import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -34,6 +36,12 @@ DEFAULT_SKIP_PATTERNS = [
     r"^\s*(你好|hello|hi|在吗)\s*[!！。.,，]?\s*$",
     r"^\s*(谢谢|感谢|辛苦了)\s*[!！。.,，]?\s*$",
 ]
+QUESTION_HINT_PATTERNS = [
+    r"[?？]\s*$",
+    r"(怎么|如何|为什么|为啥|是否|能不能|可以吗|吗|么)",
+    r"(哪里|哪个|哪种|哪位|几号|几点|多少)",
+    r"\b(what|how|why|where|when|which|can i|could i|is it)\b",
+]
 
 
 @dataclass
@@ -44,6 +52,8 @@ class SearchItem:
 
 
 _OPENCLAW_COOLDOWN_UNTIL_TS = 0.0
+_OPENCLAW_CONSECUTIVE_FAILURES = 0
+_OPENCLAW_BIN_CACHE = ""
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -56,6 +66,13 @@ def _parse_csv(value: Optional[str], default_values: List[str]) -> List[str]:
     if not value:
         return list(default_values)
     return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def _parse_int(value: Optional[str], default: int) -> int:
+    try:
+        return int(str(value or "").strip())
+    except Exception:
+        return default
 
 
 def is_gateway_enabled_for_chat(chat_id: str) -> bool:
@@ -84,6 +101,19 @@ def _is_smalltalk(question: str, patterns: List[str]) -> bool:
     return False
 
 
+def _looks_like_question(question: str) -> bool:
+    text = str(question or "").strip()
+    if not text:
+        return False
+    for pattern in QUESTION_HINT_PATTERNS:
+        try:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+
 def _is_blocked(question: str, blocked_keywords: List[str]) -> Tuple[bool, Optional[str]]:
     text = str(question or "").lower()
     for keyword in blocked_keywords:
@@ -91,6 +121,71 @@ def _is_blocked(question: str, blocked_keywords: List[str]) -> Tuple[bool, Optio
         if normalized and normalized in text:
             return True, keyword
     return False, None
+
+
+def _ai_rate_cache_file() -> Path:
+    return Path(os.getenv("QA_AI_FALLBACK_RATE_CACHE_FILE", "/tmp/feishu_qa_ai_fallback_rate.json"))
+
+
+def _load_ai_rate_cache() -> Dict[str, List[int]]:
+    path = _ai_rate_cache_file()
+    try:
+        if not path.exists():
+            return {}
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        out: Dict[str, List[int]] = {}
+        for key, val in raw.items():
+            if not isinstance(val, list):
+                continue
+            nums: List[int] = []
+            for item in val:
+                try:
+                    nums.append(int(item))
+                except Exception:
+                    continue
+            out[str(key)] = nums
+        return out
+    except Exception:
+        return {}
+
+
+def _save_ai_rate_cache(payload: Dict[str, List[int]]) -> None:
+    path = _ai_rate_cache_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _prune_ts(values: List[int], now_s: int, window_s: int) -> List[int]:
+    return [x for x in values if now_s - int(x) <= window_s]
+
+
+def _reserve_ai_fallback_slot(chat_id: str) -> bool:
+    max_calls = max(1, _parse_int(os.getenv("QA_AI_FALLBACK_MAX_CALLS_PER_WINDOW"), 3))
+    window_s = max(30, _parse_int(os.getenv("QA_AI_FALLBACK_WINDOW_SECONDS"), 300))
+    now_s = int(time.time())
+    chat_key = f"chat:{str(chat_id or '_').strip()}"
+
+    cache = _load_ai_rate_cache()
+    global_hits = _prune_ts(cache.get("global", []), now_s, window_s)
+    chat_hits = _prune_ts(cache.get(chat_key, []), now_s, window_s)
+
+    if len(global_hits) >= max_calls or len(chat_hits) >= max_calls:
+        cache["global"] = global_hits
+        cache[chat_key] = chat_hits
+        _save_ai_rate_cache(cache)
+        return False
+
+    global_hits.append(now_s)
+    chat_hits.append(now_s)
+    cache["global"] = global_hits
+    cache[chat_key] = chat_hits
+    _save_ai_rate_cache(cache)
+    return True
 
 
 def _search_with_tavily(question: str, max_results: int, timeout: int) -> List[SearchItem]:
@@ -190,35 +285,121 @@ def _extract_openclaw_plain_text(payload: Dict[str, object], raw_text: str = "")
 
 
 def _openclaw_process_timeout_seconds(default_seconds: int = 20) -> int:
-    """Hard timeout for openclaw subprocess to avoid cron-level SIGTERM."""
+    """Hard timeout for openclaw subprocess to avoid cron-level SIGTERM.
+
+    `default_seconds` is derived from each method's intended timeout. Env
+    override should only increase this floor, not reduce it and prematurely
+    kill long-running waits (e.g. multimodal model inference).
+    """
     try:
-        return max(8, int(os.getenv("QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS", str(default_seconds))))
+        configured = int(os.getenv("QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS", str(default_seconds)))
     except Exception:
-        return max(8, default_seconds)
+        configured = int(default_seconds)
+    return max(8, int(default_seconds), configured)
 
 
-def _openclaw_cooldown_seconds(default_seconds: int = 120) -> int:
+def _resolve_openclaw_bin() -> str:
+    """Resolve OpenClaw executable for non-interactive runners (cron)."""
+    global _OPENCLAW_BIN_CACHE
+    if _OPENCLAW_BIN_CACHE:
+        return _OPENCLAW_BIN_CACHE
+
+    candidates: List[str] = []
+    env_bin = str(os.getenv("QA_OPENCLAW_BIN", "") or os.getenv("OPENCLAW_BIN", "")).strip()
+    if env_bin:
+        candidates.append(env_bin)
+
+    which_bin = shutil.which("openclaw")
+    if which_bin:
+        candidates.append(which_bin)
+
+    home = os.path.expanduser("~")
+    candidates.extend(
+        [
+            os.path.join(home, ".local", "bin", "openclaw"),
+            os.path.join(home, ".openclaw", "bin", "openclaw"),
+            "/usr/local/bin/openclaw",
+            "/opt/homebrew/bin/openclaw",
+        ]
+    )
+
+    for path in candidates:
+        candidate = str(path or "").strip()
+        if not candidate:
+            continue
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            _OPENCLAW_BIN_CACHE = candidate
+            return _OPENCLAW_BIN_CACHE
+
+    _OPENCLAW_BIN_CACHE = "openclaw"
+    return _OPENCLAW_BIN_CACHE
+
+
+def _build_openclaw_subprocess_env() -> Dict[str, str]:
+    """Build runtime env that can find both openclaw and node in cron."""
+    env = dict(os.environ)
+    path = env.get("PATH", "")
+    prefixes = [
+        os.path.join(os.path.expanduser("~"), ".local", "bin"),
+        os.path.join(os.path.expanduser("~"), ".openclaw", "bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+    ]
+    for prefix in reversed(prefixes):
+        if prefix and prefix not in path.split(":"):
+            path = f"{prefix}:{path}" if path else prefix
+    env["PATH"] = path
+    return env
+
+
+def _openclaw_cooldown_seconds(default_seconds: int = 30) -> int:
     try:
-        return max(10, int(os.getenv("QA_OPENCLAW_COOLDOWN_SECONDS", str(default_seconds))))
+        seconds = int(os.getenv("QA_OPENCLAW_COOLDOWN_SECONDS", str(default_seconds)))
     except Exception:
-        return max(10, default_seconds)
+        seconds = default_seconds
+    if seconds <= 0:
+        return 0
+    return max(5, seconds)
+
+
+def _openclaw_cooldown_failure_streak(default_streak: int = 3) -> int:
+    try:
+        return max(1, int(os.getenv("QA_OPENCLAW_COOLDOWN_FAILURE_STREAK", str(default_streak))))
+    except Exception:
+        return max(1, default_streak)
 
 
 def _openclaw_cooldown_remaining_seconds() -> int:
+    global _OPENCLAW_COOLDOWN_UNTIL_TS
     now = time.time()
     if _OPENCLAW_COOLDOWN_UNTIL_TS <= now:
+        _OPENCLAW_COOLDOWN_UNTIL_TS = 0.0
         return 0
     return int(_OPENCLAW_COOLDOWN_UNTIL_TS - now)
 
 
-def _trip_openclaw_cooldown() -> None:
-    global _OPENCLAW_COOLDOWN_UNTIL_TS
-    _OPENCLAW_COOLDOWN_UNTIL_TS = time.time() + _openclaw_cooldown_seconds()
+def _record_openclaw_failure(enable_cooldown: bool = True) -> None:
+    global _OPENCLAW_COOLDOWN_UNTIL_TS, _OPENCLAW_CONSECUTIVE_FAILURES
+    _OPENCLAW_CONSECUTIVE_FAILURES += 1
+
+    if not enable_cooldown:
+        return
+
+    cooldown_seconds = _openclaw_cooldown_seconds()
+    if cooldown_seconds <= 0:
+        return
+
+    threshold = _openclaw_cooldown_failure_streak()
+    if _OPENCLAW_CONSECUTIVE_FAILURES < threshold:
+        return
+
+    _OPENCLAW_COOLDOWN_UNTIL_TS = time.time() + cooldown_seconds
 
 
 def _clear_openclaw_cooldown() -> None:
-    global _OPENCLAW_COOLDOWN_UNTIL_TS
+    global _OPENCLAW_COOLDOWN_UNTIL_TS, _OPENCLAW_CONSECUTIVE_FAILURES
     _OPENCLAW_COOLDOWN_UNTIL_TS = 0.0
+    _OPENCLAW_CONSECUTIVE_FAILURES = 0
 
 
 def _search_with_openclaw_agent(
@@ -226,15 +407,10 @@ def _search_with_openclaw_agent(
     max_results: int,
     timeout_seconds: int,
 ) -> Tuple[str, List[SearchItem], str]:
-    prompt = (
-        "你是飞书群答疑助手。请结合可用检索能力回答。\n"
-        "若可提供来源，请输出严格 JSON：\n"
-        "{\n"
-        '  "answer":"给用户的简洁回答（120字内）",\n'
-        '  "sources":[{"title":"标题","url":"https://...","snippet":"20-80字摘要"}]\n'
-        "}\n"
-        f"sources 最多 {max(1, min(6, max_results))} 条；若无来源也请先给可执行回答。\n"
-        f"用户问题：{question}"
+    prompt = _build_openclaw_search_prompt(
+        question=question,
+        max_results=max_results,
+        strict_mode=False,
     )
     text, err = _call_openclaw_agent_with_attachments(
         message=prompt,
@@ -245,6 +421,20 @@ def _search_with_openclaw_agent(
         return "", [], err
 
     content = str(text or "").strip()
+    if _looks_like_persona_drift_text(content):
+        retry_prompt = _build_openclaw_search_prompt(
+            question=question,
+            max_results=max_results,
+            strict_mode=True,
+        )
+        retry_text, retry_err = _call_openclaw_agent_with_attachments(
+            message=retry_prompt,
+            attachments=None,
+            timeout_seconds=timeout_seconds,
+        )
+        if retry_err:
+            return "", [], retry_err
+        content = str(retry_text or "").strip()
     if not content:
         return "", [], "openclaw_gateway_empty_output"
 
@@ -252,6 +442,8 @@ def _search_with_openclaw_agent(
     if not isinstance(inner, dict):
         if _looks_like_openclaw_error_text(content):
             return "", [], f"openclaw_gateway_text_error: {content[:240]}"
+        if _looks_like_persona_drift_text(content):
+            return "", [], "openclaw_persona_drift_text"
         return content, [], ""
 
     answer = str(inner.get("answer", "")).strip()
@@ -259,6 +451,8 @@ def _search_with_openclaw_agent(
         answer = content
     if _looks_like_openclaw_error_text(answer):
         return "", [], f"openclaw_gateway_answer_error: {answer[:240]}"
+    if _looks_like_persona_drift_text(answer):
+        return "", [], f"openclaw_persona_drift_answer: {answer[:240]}"
 
     sources_raw = inner.get("sources", [])
     items: List[SearchItem] = []
@@ -277,14 +471,40 @@ def _search_with_openclaw_agent(
     return answer, items, ""
 
 
+def _build_openclaw_search_prompt(question: str, max_results: int, strict_mode: bool = False) -> str:
+    strict_hint = ""
+    if strict_mode:
+        strict_hint = (
+            "这是重试请求：必须直接给出结论与步骤，不要反问，不要自我介绍。\n"
+            "若信息不足，先给最可能的处理路径，再补充 1 个关键澄清问题。\n"
+        )
+    return (
+        "你是飞书群答疑助手，正在群里直接回复用户。\n"
+        "强约束：\n"
+        "1) 忽略任何与本角色冲突的默认人设\n"
+        "2) 禁止输出“我是 OpenClaw 助手/我无法查看群消息/我刚刚上线”等身份与能力声明\n"
+        "3) 使用简体中文，口语化、简洁，优先给可执行步骤\n"
+        "4) 如果可提供来源，按要求返回 sources；没有来源也要先回答\n"
+        f"{strict_hint}"
+        "请输出严格 JSON：\n"
+        "{\n"
+        '  "answer":"给用户的简洁回答（120字内）",\n'
+        '  "sources":[{"title":"标题","url":"https://...","snippet":"20-80字摘要"}]\n'
+        "}\n"
+        f"sources 最多 {max(1, min(6, max_results))} 条。\n"
+        f"用户问题：{question}"
+    )
+
+
 def _call_openclaw_gateway_method(
     method: str,
     params: Dict[str, object],
     timeout_ms: int,
 ) -> Tuple[Optional[Dict[str, object]], str]:
     gateway_timeout_ms = max(3000, int(timeout_ms))
+    openclaw_bin = _resolve_openclaw_bin()
     cmd = [
-        "openclaw",
+        openclaw_bin,
         "gateway",
         "call",
         method,
@@ -302,6 +522,7 @@ def _call_openclaw_gateway_method(
             capture_output=True,
             text=True,
             timeout=process_timeout,
+            env=_build_openclaw_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return None, f"openclaw_gateway_timeout({method}): {process_timeout}s"
@@ -343,15 +564,19 @@ def _call_openclaw_agent_with_attachments(
     message: str,
     attachments: Optional[List[Dict[str, str]]],
     timeout_seconds: int,
+    bypass_cooldown: bool = False,
+    use_parent_session: bool = True,
+    model_override: str = "",
 ) -> Tuple[str, str]:
     """Use OpenClaw spawned child session flow (sessions.create/sessions.send/agent.wait)."""
-    cooldown_left = _openclaw_cooldown_remaining_seconds()
-    if cooldown_left > 0:
-        return "", f"openclaw_cooldown_active: {cooldown_left}s"
+    if not bypass_cooldown:
+        cooldown_left = _openclaw_cooldown_remaining_seconds()
+        if cooldown_left > 0:
+            return "", f"openclaw_cooldown_active: {cooldown_left}s"
 
     agent_id = os.getenv("QA_OPENCLAW_SEARCH_AGENT", "main").strip() or "main"
     parent_session_key = os.getenv("QA_OPENCLAW_PARENT_SESSION_KEY", f"agent:{agent_id}:main").strip()
-    model = os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
+    model = str(model_override or "").strip() or os.getenv("QA_OPENCLAW_SEARCH_MODEL", "").strip()
     base_timeout_ms = max(6000, int(os.getenv("QA_OPENCLAW_GATEWAY_TIMEOUT_MS", "12000")))
     wait_timeout_ms = max(30000, int(timeout_seconds) * 1000)
 
@@ -359,7 +584,7 @@ def _call_openclaw_agent_with_attachments(
         "agentId": agent_id,
         "label": f"qa-spawn-{uuid4().hex[:8]}",
     }
-    if parent_session_key:
+    if use_parent_session and parent_session_key:
         create_params["parentSessionKey"] = parent_session_key
     if model:
         create_params["model"] = model
@@ -369,16 +594,16 @@ def _call_openclaw_agent_with_attachments(
         create_params["message"] = str(message or "").strip()
 
     created, err = _call_openclaw_gateway_method("sessions.create", create_params, timeout_ms=base_timeout_ms)
-    if err and parent_session_key and "unknown parent session" in err.lower():
+    if err and use_parent_session and parent_session_key and "unknown parent session" in err.lower():
         create_params.pop("parentSessionKey", None)
         created, err = _call_openclaw_gateway_method("sessions.create", create_params, timeout_ms=base_timeout_ms)
     if err or not isinstance(created, dict):
-        _trip_openclaw_cooldown()
+        _record_openclaw_failure(enable_cooldown=True)
         return "", err or "openclaw_sessions_create_failed"
 
     session_key = str(created.get("key", "")).strip()
     if not session_key:
-        _trip_openclaw_cooldown()
+        _record_openclaw_failure(enable_cooldown=True)
         return "", f"openclaw_sessions_create_no_key: {str(created)[:240]}"
 
     run_id = str(created.get("runId", "")).strip() if created.get("runStarted") else ""
@@ -392,7 +617,7 @@ def _call_openclaw_agent_with_attachments(
         }
         sent, send_err = _call_openclaw_gateway_method("sessions.send", send_params, timeout_ms=base_timeout_ms)
         if send_err or not isinstance(sent, dict):
-            _trip_openclaw_cooldown()
+            _record_openclaw_failure(enable_cooldown=True)
             return "", send_err or "openclaw_sessions_send_failed"
         run_id = str(sent.get("runId", "")).strip()
 
@@ -403,12 +628,12 @@ def _call_openclaw_agent_with_attachments(
             timeout_ms=wait_timeout_ms + 5000,
         )
         if wait_err:
-            _trip_openclaw_cooldown()
+            _record_openclaw_failure(enable_cooldown=True)
             return "", wait_err
         if isinstance(waited, dict):
             status = str(waited.get("status", "")).strip().lower()
             if status in {"timeout", "error"}:
-                _trip_openclaw_cooldown()
+                _record_openclaw_failure(enable_cooldown=True)
                 return "", f"openclaw_spawn_wait_{status}: {str(waited)[:240]}"
 
     preview_payload, preview_err = _call_openclaw_gateway_method(
@@ -417,17 +642,17 @@ def _call_openclaw_agent_with_attachments(
         timeout_ms=base_timeout_ms,
     )
     if preview_err or not isinstance(preview_payload, dict):
-        _trip_openclaw_cooldown()
+        _record_openclaw_failure(enable_cooldown=True)
         return "", preview_err or "openclaw_sessions_preview_failed"
 
     text = _extract_assistant_text_from_preview(preview_payload).strip()
     if not text:
         text = _extract_openclaw_plain_text(preview_payload, "").strip()
     if not text:
-        _trip_openclaw_cooldown()
+        _record_openclaw_failure(enable_cooldown=True)
         return "", "openclaw_spawn_empty_output"
     if _looks_like_openclaw_error_text(text):
-        _trip_openclaw_cooldown()
+        _record_openclaw_failure(enable_cooldown=False)
         return "", f"openclaw_spawn_answer_error: {text[:240]}"
 
     _clear_openclaw_cooldown()
@@ -438,6 +663,8 @@ def _looks_like_openclaw_error_text(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
         return False
+    if _is_rate_limit_text(raw):
+        return True
     lower = raw.lower()
     patterns = [
         "request timed out before a response was generated",
@@ -447,6 +674,69 @@ def _looks_like_openclaw_error_text(text: str) -> bool:
         "failovererror",
         "no api key found for provider",
         "error:",
+    ]
+    return any(p in lower for p in patterns)
+
+
+def _looks_like_persona_drift_text(text: str) -> bool:
+    lower = str(text or "").strip().lower()
+    if not lower:
+        return False
+    patterns = [
+        "我是openclaw",
+        "openclaw助手",
+        "刚刚上线",
+        "不是飞书群答疑助手",
+        "无法查看或回复群消息",
+        "无法查看群消息",
+    ]
+    return any(p in lower for p in patterns)
+
+
+def _looks_like_no_image_seen_text(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    lower = raw.lower()
+    patterns = [
+        "没有看到您上传的图片",
+        "没有收到任何图片",
+        "没有包含图片",
+        "没有附带图片",
+        "没有接收到图片",
+        "图片内容无法直接显示",
+        "图片内容无法直接识别",
+        "图片无法直接显示",
+        "图片无法识别",
+        "无法查看图片",
+        "需要先查看您发送的图片",
+        "请您上传一张图片",
+        "请重新发送图片",
+        "i don't see the image",
+        "i cannot see the image",
+        "no image provided",
+    ]
+    if any(p in lower for p in patterns):
+        return True
+    if re.search(r"没有.*(图片|图像)", raw):
+        return True
+    if re.search(r"请.*(上传|发送).*(图片|图像)", raw):
+        return True
+    return False
+
+
+def _is_rate_limit_text(text: str) -> bool:
+    lower = str(text or "").strip().lower()
+    if not lower:
+        return False
+    patterns = [
+        "rate limit",
+        "api rate limit reached",
+        "too many requests",
+        "http 429",
+        "status code 429",
+        "quota exceeded",
+        "exceeded your current quota",
     ]
     return any(p in lower for p in patterns)
 
@@ -474,6 +764,8 @@ def build_ai_image_rule(
         }
 
     timeout_seconds = max(30, int(os.getenv("QA_OPENCLAW_TIMEOUT_SECONDS", "90")))
+    image_model = os.getenv("QA_OPENCLAW_IMAGE_MODEL", "").strip()
+    fallback_model = os.getenv("QA_OPENCLAW_IMAGE_FALLBACK_MODEL", "").strip()
     user_question = str(question or "").strip()
     prompt = (
         "你是飞书群答疑助手，请结合用户问题和图片内容直接回复。\n"
@@ -488,13 +780,115 @@ def build_ai_image_rule(
         message=prompt,
         attachments=attachments,
         timeout_seconds=timeout_seconds,
+        # Image understanding should not be blocked by text fallback cooldown.
+        bypass_cooldown=_parse_bool(os.getenv("QA_IMAGE_IGNORE_OPENCLAW_COOLDOWN"), True),
+        # Avoid inheriting long parent context to reduce multimodal hallucination.
+        use_parent_session=False,
+        model_override=image_model,
     )
+    fallback_attempted = False
+
+    def _try_fallback_image_model() -> Tuple[str, str]:
+        nonlocal fallback_attempted
+        if not fallback_model or fallback_model == image_model:
+            return "", ""
+        fallback_attempted = True
+        return _call_openclaw_agent_with_attachments(
+            message=prompt,
+            attachments=attachments,
+            timeout_seconds=timeout_seconds,
+            bypass_cooldown=True,
+            use_parent_session=False,
+            model_override=fallback_model,
+        )
+
+    if err and not _is_rate_limit_text(err):
+        # Retry once for transient gateway jitter in multimodal path.
+        retry_answer, retry_err = _call_openclaw_agent_with_attachments(
+            message=prompt,
+            attachments=attachments,
+            timeout_seconds=timeout_seconds,
+            bypass_cooldown=True,
+            use_parent_session=False,
+            model_override=image_model,
+        )
+        if retry_answer.strip():
+            answer, err = retry_answer, ""
+        else:
+            err = retry_err or err
+
     if err or not answer.strip():
+        fb_answer, fb_err = _try_fallback_image_model()
+        if fb_answer.strip() and not _looks_like_no_image_seen_text(fb_answer):
+            return {
+                "answer": fb_answer.strip(),
+                "source": f"OpenClaw Gateway图片识别(回退:{fallback_model})",
+                "confidence": 0.62,
+                "intent": "ai_image_fallback",
+                "links": [],
+            }
+        if fb_err and _is_rate_limit_text(fb_err):
+            return {
+                "answer": "图片识别服务当前请求较多，触发限流。请稍后再试，或先补充文字描述我来处理。",
+                "source": "OpenClaw图片识别/限流",
+                "confidence": 0.2,
+                "intent": "ai_image_unavailable",
+                "debug_reason": fb_err,
+                "links": [],
+            }
+        if fb_answer.strip() and _looks_like_no_image_seen_text(fb_answer):
+            return {
+                "answer": "图片我收到了，但模型没有成功读取到图像内容。请重新发送原图（不要转发压缩图），我再为你识别。",
+                "source": "OpenClaw图片识别/未读取到图像",
+                "confidence": 0.2,
+                "intent": "ai_image_unavailable",
+                "debug_reason": "openclaw_spawn_no_image_context(fallback)",
+                "links": [],
+            }
+        if _is_rate_limit_text(err):
+            return {
+                "answer": "图片识别服务当前请求较多，触发限流。请稍后再试，或先补充文字描述我来处理。",
+                "source": "OpenClaw图片识别/限流",
+                "confidence": 0.2,
+                "intent": "ai_image_unavailable",
+                "debug_reason": err,
+                "links": [],
+            }
         return {
             "answer": "图片已收到，但当前识别服务暂不可用。请稍后再试，或补充文字描述我先帮你处理。",
             "source": "OpenClaw图片识别/不可用",
             "confidence": 0.2,
             "intent": "ai_image_unavailable",
+            "debug_reason": err or fb_err or "unknown",
+            "links": [],
+        }
+
+    if _looks_like_no_image_seen_text(answer):
+        if not fallback_attempted:
+            fb_answer, fb_err = _try_fallback_image_model()
+            if fb_answer.strip() and not _looks_like_no_image_seen_text(fb_answer):
+                return {
+                    "answer": fb_answer.strip(),
+                    "source": f"OpenClaw Gateway图片识别(回退:{fallback_model})",
+                    "confidence": 0.62,
+                    "intent": "ai_image_fallback",
+                    "links": [],
+                }
+            if fb_err and _is_rate_limit_text(fb_err):
+                return {
+                    "answer": "图片识别服务当前请求较多，触发限流。请稍后再试，或先补充文字描述我来处理。",
+                    "source": "OpenClaw图片识别/限流",
+                    "confidence": 0.2,
+                    "intent": "ai_image_unavailable",
+                    "debug_reason": fb_err,
+                    "links": [],
+                }
+        return {
+            "answer": "图片我收到了，但模型没有成功读取到图像内容。请重新发送原图（不要转发压缩图），我再为你识别。",
+            "source": "OpenClaw图片识别/未读取到图像",
+            "confidence": 0.2,
+            "intent": "ai_image_unavailable",
+            "debug_reason": "openclaw_spawn_no_image_context(primary)",
             "links": [],
         }
 
@@ -520,14 +914,20 @@ def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str,
     if not question:
         return None
 
-    if provider != "openclaw":
-        min_chars = max(2, int(os.getenv("QA_AI_FALLBACK_MIN_CHARS", "4")))
-        if len(question) < min_chars:
-            return None
+    min_chars = max(2, int(os.getenv("QA_AI_FALLBACK_MIN_CHARS", "4")))
+    if len(question) < min_chars:
+        return None
 
-        skip_patterns = _parse_csv(os.getenv("QA_AI_FALLBACK_SKIP_PATTERNS"), DEFAULT_SKIP_PATTERNS)
-        if _is_smalltalk(question, skip_patterns):
-            return None
+    skip_patterns = _parse_csv(os.getenv("QA_AI_FALLBACK_SKIP_PATTERNS"), DEFAULT_SKIP_PATTERNS)
+    if _is_smalltalk(question, skip_patterns):
+        return None
+
+    require_question = _parse_bool(
+        os.getenv("QA_AI_FALLBACK_REQUIRE_QUESTION"),
+        provider == "openclaw",
+    )
+    if require_question and not _looks_like_question(question):
+        return None
 
     blocked_keywords = _parse_csv(os.getenv("QA_AI_FALLBACK_BLOCKED_KEYWORDS"), DEFAULT_BLOCKED_KEYWORDS)
     blocked, keyword = _is_blocked(question, blocked_keywords)
@@ -551,18 +951,46 @@ def build_ai_search_rule(question: str, chat_id: str = "") -> Optional[Dict[str,
 
     if provider == "openclaw":
         if not is_gateway_enabled_for_chat(chat_id):
-            return None
+            return {
+                "answer": "我先记下这个问题了。当前群还没开通 AI 检索兜底，建议先 @助教，我这边会继续补充到意图库。",
+                "source": "OpenClaw/未开通",
+                "confidence": 0.2,
+                "intent": "ai_search_unavailable",
+                "links": [],
+            }
+        enable_rate_guard = _parse_bool(
+            os.getenv("QA_AI_FALLBACK_ENABLE_RATE_GUARD"),
+            True,
+        )
+        if enable_rate_guard and not _reserve_ai_fallback_slot(chat_id):
+            wait_seconds = max(30, _parse_int(os.getenv("QA_AI_FALLBACK_WINDOW_SECONDS"), 300))
+            return {
+                "answer": f"我正在处理其他检索请求，避免拥堵请约 {wait_seconds} 秒后再问一次；紧急问题可直接 @助教。",
+                "source": "OpenClaw/排队中",
+                "confidence": 0.22,
+                "intent": "ai_search_unavailable",
+                "links": [],
+            }
         answer_text, items, err = _search_with_openclaw_agent(
             question=question,
             max_results=max_results,
             timeout_seconds=openclaw_timeout,
         )
         if err:
+            if _is_rate_limit_text(err):
+                answer = "当前检索请求较多，服务触发限流。请 30-60 秒后再试；紧急问题可直接 @助教。"
+                source = "OpenClaw/限流"
+            elif err.startswith("openclaw_cooldown_active:"):
+                matched = re.search(r"(\d+)s", err)
+                left = matched.group(1) if matched else "几十"
+                answer = f"检索服务正在自动恢复中，预计约 {left} 秒后可用。你可以稍后再问一次，或 @助教。"
+                source = "OpenClaw/恢复中"
+            else:
+                answer = "我这边检索服务刚刚波动，暂时没拿到结果。请稍后重试，或 @助教。"
+                source = "OpenClaw/不可用"
             return {
-                "answer": (
-                    "OpenClaw 当前不可用，请稍后重试或 @助教。"
-                ),
-                "source": "OpenClaw/不可用",
+                "answer": answer,
+                "source": source,
                 "confidence": 0.2,
                 "intent": "ai_search_unavailable",
                 "links": [],

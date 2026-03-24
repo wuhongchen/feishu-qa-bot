@@ -3,14 +3,52 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-QUIET_IDLE="${QA_NOTIFY_ON_IDLE:-false}"
-CYCLE_LOG_FILE="${QA_CYCLE_LOG_FILE:-/tmp/feishu_qa_cycle.log}"
+
+# Preserve caller-provided env overrides (e.g. cron inline vars) so .env load
+# won't accidentally overwrite runtime behavior.
+OVR_QA_NOTIFY_ON_IDLE="${QA_NOTIFY_ON_IDLE-__UNSET__}"
+OVR_QA_SYNC_INTENTS_TO_BITABLE="${QA_SYNC_INTENTS_TO_BITABLE-__UNSET__}"
+OVR_QA_KB_SOURCE="${QA_KB_SOURCE-__UNSET__}"
+OVR_QA_CYCLE_LOG_FILE="${QA_CYCLE_LOG_FILE-__UNSET__}"
+OVR_QA_IDLE_TEXT="${QA_IDLE_TEXT-__UNSET__}"
 
 # Load project .env for non-interactive runners (cron/OpenClaw).
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/load_env.sh"
 
+if [[ "${OVR_QA_NOTIFY_ON_IDLE}" != "__UNSET__" ]]; then
+  export QA_NOTIFY_ON_IDLE="${OVR_QA_NOTIFY_ON_IDLE}"
+fi
+if [[ "${OVR_QA_SYNC_INTENTS_TO_BITABLE}" != "__UNSET__" ]]; then
+  export QA_SYNC_INTENTS_TO_BITABLE="${OVR_QA_SYNC_INTENTS_TO_BITABLE}"
+fi
+if [[ "${OVR_QA_KB_SOURCE}" != "__UNSET__" ]]; then
+  export QA_KB_SOURCE="${OVR_QA_KB_SOURCE}"
+fi
+if [[ "${OVR_QA_CYCLE_LOG_FILE}" != "__UNSET__" ]]; then
+  export QA_CYCLE_LOG_FILE="${OVR_QA_CYCLE_LOG_FILE}"
+fi
+if [[ "${OVR_QA_IDLE_TEXT}" != "__UNSET__" ]]; then
+  export QA_IDLE_TEXT="${OVR_QA_IDLE_TEXT}"
+fi
+
+QUIET_IDLE="${QA_NOTIFY_ON_IDLE:-false}"
+CYCLE_LOG_FILE="${QA_CYCLE_LOG_FILE:-/tmp/feishu_qa_cycle.log}"
+IDLE_TEXT="${QA_IDLE_TEXT:-本轮已执行完成，暂无需要处理的消息。}"
+LOCK_DIR="${QA_CYCLE_LOCK_DIR:-/tmp/feishu_qa_cycle.lock}"
+
 cd "${PROJECT_DIR}"
+
+# Prevent overlapping cron runs, which can cause duplicate replies.
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  echo "上一轮仍在执行中，本轮跳过。"
+  exit 0
+fi
+
+cleanup_lock() {
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+trap cleanup_lock EXIT
 
 # Optional: sync KB before polling when QA_KB_SOURCE is configured.
 if [[ -n "${QA_KB_SOURCE:-}" ]]; then
@@ -85,5 +123,9 @@ fi
 
 QUIET_IDLE_NORM="$(printf '%s' "${QUIET_IDLE}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${QUIET_IDLE_NORM}" =~ ^(1|true|yes|y|on)$ ]]; then
-  echo "${BROADCAST_TEXT:-本轮无新消息。}"
+  echo "${BROADCAST_TEXT:-${IDLE_TEXT}}"
+  exit 0
 fi
+
+# Keep one concise line for idle rounds to avoid platform "(no output)" hints.
+echo "${IDLE_TEXT}"
