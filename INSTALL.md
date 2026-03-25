@@ -50,6 +50,9 @@ QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 
 - `QA_NOTIFY_ON_IDLE=false`：空闲轮次不播报（默认）。
 - `QA_CYCLE_LOG_FILE=/tmp/feishu_qa_cycle.log`：同步/巡检详细日志落盘，不在群里展开。
+- `QA_MESSAGE_TRIGGER_MODE=all`：群内所有文本/图片都处理（默认，非@也回复）。
+- `QA_REPLY_REQUIRE_MENTION=false`：不强制要求@机器人。
+- `QA_FETCH_PAGE_SIZE=20`：每轮每群拉取消息条数。
 
 ## 5. 注入 OpenClaw 并注册原生调度
 
@@ -64,6 +67,11 @@ bash scripts/inject_openclaw_skill.sh
 ```bash
 bash scripts/register_openclaw_cron.sh
 ```
+
+默认会注册三类任务：
+- 高频消息轮询（默认 30 秒）
+- 低频知识同步（默认 30 分钟）
+- 每日健康检查
 
 如果你调整了播报文案策略，也需要重新执行一次上面的注册脚本，使 cron 任务提示词生效。
 

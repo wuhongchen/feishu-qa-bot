@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 _field_name_cache: Dict[str, set] = {}
+_field_meta_cache: Dict[str, Dict[str, dict]] = {}
 
 
 def extract_app_token_from_base_url(base_url: str) -> str:
@@ -192,20 +193,34 @@ def _filter_fields_by_table_schema(
     filtered = {k: v for k, v in fields.items() if v is not None}
     cache_key = f"{app_token}:{table_id}"
     allowed_names = _field_name_cache.get(cache_key)
+    field_meta = _field_meta_cache.get(cache_key) or {}
 
     if allowed_names is None:
         ok, allowed_names = list_field_names(token=token, app_token=app_token, table_id=table_id, timeout=timeout)
         if ok and allowed_names:
             _field_name_cache[cache_key] = allowed_names
+            meta_ok, meta = list_field_meta(token=token, app_token=app_token, table_id=table_id, timeout=timeout)
+            if meta_ok:
+                _field_meta_cache[cache_key] = meta
+                field_meta = meta
         else:
             _field_name_cache[cache_key] = set()
             return filtered
+    elif not field_meta:
+        meta_ok, meta = list_field_meta(token=token, app_token=app_token, table_id=table_id, timeout=timeout)
+        if meta_ok:
+            _field_meta_cache[cache_key] = meta
+            field_meta = meta
 
     if not allowed_names:
         return filtered
 
     matched = {k: v for k, v in filtered.items() if k in allowed_names}
-    return matched or filtered
+    payload_fields = matched or filtered
+    normalized: Dict[str, object] = {}
+    for field_name, value in payload_fields.items():
+        normalized[field_name] = _normalize_field_value(field_name, value, field_meta.get(field_name))
+    return normalized or payload_fields
 
 
 def list_field_names(token: str, app_token: str, table_id: str, timeout: int = 8) -> Tuple[bool, set]:
@@ -245,3 +260,86 @@ def list_field_names(token: str, app_token: str, table_id: str, timeout: int = 8
             break
 
     return True, names
+
+
+def list_field_meta(token: str, app_token: str, table_id: str, timeout: int = 8) -> Tuple[bool, Dict[str, dict]]:
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"page_size": 500}
+    meta: Dict[str, dict] = {}
+    page_token = ""
+    has_more = True
+
+    while has_more:
+        req_params = dict(params)
+        if page_token:
+            req_params["page_token"] = page_token
+        try:
+            resp = requests.get(url, headers=headers, params=req_params, timeout=timeout)
+            body = resp.json()
+        except Exception:
+            return False, {}
+
+        if body.get("code") != 0:
+            return False, {}
+
+        data = body.get("data", {})
+        items = data.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                field_name = str(item.get("field_name", "")).strip()
+                if not field_name:
+                    continue
+                prop = item.get("property")
+                meta[field_name] = {
+                    "type": item.get("type"),
+                    "property": prop if isinstance(prop, dict) else {},
+                }
+
+        has_more = bool(data.get("has_more"))
+        page_token = str(data.get("page_token", "")).strip()
+        if has_more and not page_token:
+            break
+
+    return True, meta
+
+
+def _normalize_field_value(field_name: str, value: object, meta: Optional[dict]) -> object:
+    del field_name
+    if not isinstance(meta, dict):
+        return value
+    field_type = meta.get("type")
+    if field_type == 11:
+        prop = meta.get("property") if isinstance(meta.get("property"), dict) else {}
+        multiple = bool(prop.get("multiple", True))
+        return _normalize_user_value(value, multiple=multiple)
+    return value
+
+
+def _normalize_user_value(value: object, multiple: bool = True) -> object:
+    if value is None:
+        return [] if multiple else None
+
+    def _as_user_obj(item: object) -> Optional[dict]:
+        if isinstance(item, dict):
+            uid = str(item.get("id", "")).strip()
+            return {"id": uid} if uid else None
+        uid = str(item or "").strip()
+        return {"id": uid} if uid else None
+
+    if multiple:
+        if isinstance(value, list):
+            users = [obj for obj in (_as_user_obj(item) for item in value) if obj]
+            return users
+        user_obj = _as_user_obj(value)
+        return [user_obj] if user_obj else []
+
+    if isinstance(value, list):
+        for item in value:
+            user_obj = _as_user_obj(item)
+            if user_obj:
+                return user_obj
+        return None
+    return _as_user_obj(value)

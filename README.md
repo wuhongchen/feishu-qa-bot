@@ -97,6 +97,8 @@ QA_KB_SOURCE=/path/to/intents-source.json bash scripts/run_qa_cycle.sh
 - `scripts/run_qa_cycle.sh` 只输出最终播报一句。
 - 空闲轮次默认静默（`QA_NOTIFY_ON_IDLE=false`）。
 - 同步过程日志写入 `QA_CYCLE_LOG_FILE`（默认 `/tmp/feishu_qa_cycle.log`）。
+- 群消息触发模式默认 `QA_MESSAGE_TRIGGER_MODE=all`（非@消息也会处理）。
+- 若要仅在被@时回复，可设置 `QA_MESSAGE_TRIGGER_MODE=mention` 或 `QA_REPLY_REQUIRE_MENTION=true`。
 
 如果你希望注入到 OpenClaw 原生运行（推荐）：
 
@@ -105,6 +107,11 @@ bash scripts/inject_openclaw_skill.sh
 bash scripts/register_openclaw_cron.sh
 openclaw cron list --all --json
 ```
+
+`register_openclaw_cron.sh` 默认会创建：
+- 高频消息轮询任务（默认每 30 秒，仅轮询与回复，不做知识同步）
+- 低频同步任务（默认每 30 分钟，同步知识库与意图库）
+- 每日健康检查任务
 
 如果你希望直接使用你给的 base 链接配置表格，可以设置：
 
@@ -154,6 +161,7 @@ python3 scripts/sync_knowledge_base.py \
 - 本地意图未命中
 - 问题长度达到 `QA_AI_FALLBACK_MIN_CHARS`
 - 不匹配 `QA_AI_FALLBACK_SKIP_PATTERNS`（例如“你好/谢谢”）
+- 默认要求是“提问句”场景（`QA_AI_FALLBACK_REQUIRE_QUESTION=true`）
 
 边界控制：
 
@@ -170,10 +178,21 @@ QA_OPENCLAW_GATEWAY_CHAT_IDS=oc_xxx,oc_yyy
 QA_OPENCLAW_TIMEOUT_SECONDS=90
 QA_OPENCLAW_PROCESS_TIMEOUT_SECONDS=20
 QA_OPENCLAW_GATEWAY_TIMEOUT_MS=12000
-QA_OPENCLAW_COOLDOWN_SECONDS=120
+QA_OPENCLAW_COOLDOWN_SECONDS=30
+QA_OPENCLAW_COOLDOWN_FAILURE_STREAK=3
 QA_OPENCLAW_PARENT_SESSION_KEY=agent:main:main
-QA_APPEND_INTENT_NOTE=true
+QA_AI_FALLBACK_MIN_CHARS=6
+QA_AI_FALLBACK_REQUIRE_QUESTION=true
+QA_AI_FALLBACK_ENABLE_RATE_GUARD=true
+QA_AI_FALLBACK_MAX_CALLS_PER_WINDOW=1
+QA_AI_FALLBACK_WINDOW_SECONDS=120
+QA_AI_FALLBACK_RATE_CACHE_FILE=/tmp/feishu_qa_ai_fallback_rate.json
+QA_APPEND_INTENT_NOTE=false
 QA_APPEND_INTENT_NOTE_ON_UNMATCH=false
+QA_REPLY_APPEND_META=false
+QA_MESSAGE_TRIGGER_MODE=all
+QA_REPLY_REQUIRE_MENTION=false
+QA_FETCH_PAGE_SIZE=20
 QA_ENABLE_IMAGE_UNDERSTANDING=true
 QA_IMAGE_MAX_BYTES=5000000
 ```
@@ -192,7 +211,7 @@ QA_IMAGE_MAX_BYTES=5000000
 
 会话内意图补充说明：
 - 默认沿用原始流程：先本地意图，未命中再 AI 搜索兜底。
-- `QA_APPEND_INTENT_NOTE=true`：命中意图时在回复末尾补充一行识别说明。
+- `QA_APPEND_INTENT_NOTE=false`：默认不附加“意图识别”说明，减少技术感。
 - `QA_APPEND_INTENT_NOTE_ON_UNMATCH=false`：未命中时默认不加提示，降低噪音。
 
 如需改为 Tavily：
@@ -211,6 +230,19 @@ QA_TAVILY_API_KEY=tvly-xxxx
 ```bash
 python3 scripts/sync_intents_to_bitable.py
 ```
+
+建议把意图库放在独立数据表，并配置：
+
+```bash
+QA_INTENT_TABLE_NAME=意图库
+# 可选：显式指定意图库 table_id
+QA_INTENT_TABLE_ID=tblxxxxxxxx
+QA_INTENT_BACKFILL_EXISTING=true
+```
+
+说明：
+- 当目标表包含 `意图ID/回答模板` 字段时，脚本会进入“意图库专表模式”，按 `意图ID` upsert。
+- 会自动回填常见缺失列（如 `命中次数/创建时间/更新时间/是否启用`）。
 
 建议在全周期中开启：
 

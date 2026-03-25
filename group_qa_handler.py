@@ -33,7 +33,7 @@ def _parse_bool(value: Optional[str], default: bool) -> bool:
 
 
 def _should_append_meta(rule: dict) -> bool:
-    if not _parse_bool(os.getenv("QA_REPLY_APPEND_META", "true"), True):
+    if not _parse_bool(os.getenv("QA_REPLY_APPEND_META", "false"), False):
         return False
     intent = str((rule or {}).get("intent", "")).strip()
     if intent.startswith("ai_search_"):
@@ -51,8 +51,9 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
 MAX_ROUNDS = max(0, int(os.getenv("QA_MAX_ROUNDS", "0")))
 SESSION_TTL_MINUTES = max(5, int(os.getenv("QA_SESSION_TTL_MINUTES", "30")))
 ENABLE_NPS = _parse_bool(os.getenv("QA_ENABLE_NPS"), True)
-APPEND_INTENT_NOTE = _parse_bool(os.getenv("QA_APPEND_INTENT_NOTE"), True)
+APPEND_INTENT_NOTE = _parse_bool(os.getenv("QA_APPEND_INTENT_NOTE"), False)
 APPEND_INTENT_NOTE_ON_UNMATCH = _parse_bool(os.getenv("QA_APPEND_INTENT_NOTE_ON_UNMATCH"), False)
+REPLY_REQUIRE_MENTION = _parse_bool(os.getenv("QA_REPLY_REQUIRE_MENTION", "false"), False)
 NPS_EXCLUDE_INTENTS = {"thanks", "bot_status"}
 NPS_EXCLUDE_INTENTS.update({"ai_search_fallback", "ai_search_no_result", "ai_search_blocked", "ai_search_unavailable"})
 
@@ -79,6 +80,15 @@ def _is_nps_score(text: str) -> Optional[int]:
     if 0 <= score <= 10:
         return score
     return None
+
+
+def _looks_like_mention_text(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if "<at " in raw.lower():
+        return True
+    return raw.startswith("@")
 
 
 def _get_or_create_session(chat_id: str, user_id: str) -> Tuple[dict, bool]:
@@ -211,13 +221,15 @@ def build_record_fields(
 
     fields = {
         "会话ID": session["session_id"],
+        "提问者": session.get("user_id", ""),
         "提问时间": timestamp,
         "问题内容": question,
         "回答内容": answer,
         "轮次": session["rounds"],
         "状态": "进行中",
         "是否解决": None,
-        "结束时间": None,
+        # Keep end-time populated for each QA record to avoid empty columns in Bitable.
+        "结束时间": timestamp,
         "NPS状态": "已评分" if nps_score is not None else "待评分" if nps_requested else None,
     }
 
@@ -268,9 +280,11 @@ def process_group_message(
     mentions: Optional[list] = None,
 ) -> Tuple[Optional[str], Optional[dict]]:
     """Main message processing function."""
-    del mentions  # Reserved for future mention-only mode.
 
     if chat_id not in QA_CHAT_IDS:
+        return None, None
+    mention_list = mentions if isinstance(mentions, list) else []
+    if REPLY_REQUIRE_MENTION and not mention_list and not _looks_like_mention_text(message):
         return None, None
 
     session, is_new_session = _get_or_create_session(chat_id, sender_id)
@@ -296,7 +310,7 @@ def process_group_message(
         rule = build_ai_search_rule(message, chat_id=chat_id)
         if not rule:
             session["questions"].append(message)
-            unmatched_answer = "未命中意图，且当前群未开启 AI 兜底，已记录到问题库待补充。"
+            unmatched_answer = "我先记下这个问题了，暂时还没有现成答案。你可以补充一点背景信息，我继续帮你查。"
             record_fields = build_record_fields(
                 session,
                 question=message,
@@ -304,11 +318,11 @@ def process_group_message(
                 matched=False,
                 nps_requested=False,
             )
-            record_fields["状态"] = "未命中"
+            record_fields["状态"] = "待补充意图"
             record_fields["知识来源"] = "知识库/未命中"
             record_fields["置信度"] = 0.0
             record_fields["意图分类"] = "unmatched"
-            return None, record_fields
+            return unmatched_answer, record_fields
 
     session["rounds"] += 1
 
